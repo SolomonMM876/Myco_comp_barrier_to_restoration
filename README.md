@@ -96,7 +96,6 @@ install.packages(c(
 | HMSC Chord Diagrams | Static co-occurrence chord figures | `publication_hmsc_chord_*.png` |
 | HMSC Interactive Chords | Interactive HTML chord diagrams (positive/negative side-by-side) | `publication_hmsc_chord_interactive.html` |
 | Genera vs Site Recovery | Crosshair recovery plots | `Figure_EcM_Master_SiteRecovery.png` |
-| CCA Supp Table | Variable selection summary | `TableS1_CCA_Variables.docx` |
 
 ## Statistical Methods
 
@@ -112,10 +111,10 @@ install.packages(c(
 ## Notes
 
 - `analysis.Rmd` is the primary reproducible entry point. Most analyses
-  are coded inline. One script is sourced externally:
+  are coded inline. One folder is sourced externally:
   - `R_scripts/hmsc/dataPrep_hmsc_*.R` — HMSC data prep & model fitting
     (sourced only if the `hmsc-run-models` chunk is uncommented)
-- `R_scripts/Site_maps.R` standalone script retained for reference.
+- `R_scripts/Site_maps.R` standalone script retained for to generate manuscript plots
 - All paths in the `R_scripts/hmsc/` scripts resolve relative to `proj_root`
   (set automatically via `here::here()` when sourced from the Rmd).
 - HMSC models are **never re-fit** during a normal knit — only pre-saved
