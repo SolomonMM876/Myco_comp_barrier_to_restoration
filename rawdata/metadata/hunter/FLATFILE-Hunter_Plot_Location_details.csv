@@ -1,0 +1,94 @@
+Plot_id,Site_id,Treatment,PCT_Number,PCT_Name,Establishment,Zone,Easting,Northing,Plot Bearing
+22,Mangoola Mine,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,285213,6426004,290
+23,Mangoola Mine,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,285322,6426473,270
+25,Mangoola Mine,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,279448,6421308,315
+37,Mangoola Mine,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,284404,6424458,90
+38,Mangoola Mine,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,285326,6425336,300
+39,Mangoola Mine,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,284280,6424994,90
+40,Mt Thorley Warkworth,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,317160,6401068,165
+41,Mt Thorley Warkworth,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,314916,6386861,295
+42,Mt Thorley Warkworth,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,314003,6387986,165
+43,Mt Thorley Warkworth,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,314266,6388650,2
+44,Mt Thorley Warkworth,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,315547,6392802,315
+54,Wambo,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,309535,6391970,30
+58,Wambo,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,309188,6392619,25
+61,Mt Thorley Warkworth,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,315312,6386092,165
+84,Bulga,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,324877,6387120,220
+94,Bulga,Reference,3431,Central Hunter Ironbark Grassy Woodland,NA,56,317682,6383216,50
+12,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2011,56,282291,6427185,335
+20,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,282561,6426903,240
+21,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,282768,6427135,280
+29,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2015,56,283605,6426848,195
+31,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2014,56,283235,6426533,119
+32,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,282205,6426919,147
+33,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2011,56,282635,6427320,345
+34,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2012,56,281971,6427011,329
+35,Mangoola Mine,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2012,56,281985,6426925,325
+45,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2010,56,318274,6391422,165
+46,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2009,56,319070,6391528,280
+47,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2015,56,319754,6392646,180
+48,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2015,56,319046,6390070,135
+49,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2011,56,319598,6390305,280
+50,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2014,56,319801,6388508,75
+59,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2011,56,318161,6392141,40
+60,Mt Thorley Warkworth,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2011,56,318132,6392046,320
+64,United,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,1992,56,312593,6395537,135
+73,Mt Owen,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2010,56,321471,6415165,350
+81,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2014,56,318331,6384442,255
+82,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2015,56,318413,6384276,255
+83,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2015,56,319834,6380516,240
+88,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,321040,6383661,240
+89,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,321139,6383504,240
+90,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,320483,6383935,147
+91,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2013,56,320624,6383809,240
+92,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2007,56,321344,6380074,187
+93,Bulga,Rehabilitated,3431,Central Hunter Ironbark Grassy Woodland,2015,56,319700,6380800,250
+51,Belford,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,340478,6385723,30
+52,Belford,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,340326,6385941,70
+53,Belford,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,340078,6386549,290
+68,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,322733,6415425,15
+69,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,323200,6415740,255
+70,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,323154,6416204,100
+71,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,322993,6414492,160
+77,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,323519,6415006,300
+78,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,323575,6414262,315
+79,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,323642,6414115,265
+80,Mt Owen,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,323385,6414235,344
+85,Bulga,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,321852,6377989,220
+87,Bulga,Reference,3315,Central Hunter Ironbark-Spotted Gum Forest,NA,56,321360,6378101,285
+65,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,1998,56,320271,6414510,250
+66,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,1998,56,322101,6415902,105
+67,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,2009,56,322740,6414721,330
+72,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,2010,56,322139,6415045,90
+74,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,2007,56,320888,6415478,285
+75,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,2006,56,320653,6415289,280
+76,Mt Owen,Rehabilitated,3315,Central Hunter Ironbark-Spotted Gum Forest,2007,56,321390,6415406,120
+1,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,283114,6427845,280
+2,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,283886,6427802,295
+7,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,284176,6427598,103
+8,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,284993,6424065,345
+9,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,285204,6424343,25
+10,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,284439,6424899,120
+11,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,285011,6423425,135
+19,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,284941,6428114,45
+24,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,280444,6420728,180
+26,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,280071,6421133,240
+36,Mangoola Mine,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,285168,6427761,244
+63,Jerry's Plains,Reference,3485,Central Hunter Slaty Gum Grassy Forest,NA,56,301811,6402364,270
+3,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2012,56,283005,6427704,330
+4,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2011,56,282196,6427245,345
+5,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2016,56,281629,6426853,330
+13,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2011,56,282338,6427308,320
+14,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2011,56,282441,6427366,335
+15,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2011,56,282580,6427437,330
+16,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2013,56,283106,6427498,3
+17,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2012,56,283034,6427520,300
+18,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2013,56,282769,6427222,330
+30,Mangoola Mine,Rehabilitated,3485,Central Hunter Slaty Gum Grassy Forest,2013,56,283148,6426893,195
+62,Jerrys Plains,Reference,3314,Central Hunter Slopes Grey Box Forest,NA,56,305578,6400351,85
+55,Wambo,Reference,3438,Hunter Escarpment Footslopes Ironbark Forest,NA,56,308233,6390186,75
+56,Wambo,Reference,3438,Hunter Escarpment Footslopes Ironbark Forest,NA,56,308271,6390323,44
+57,Wambo,Reference,3438,Hunter Escarpment Footslopes Ironbark Forest,NA,56,308521,6390588,207
+86,Bulga,Reference,3438,Hunter Escarpment Footslopes Ironbark Forest,NA,56,323100,6377890,30
+27,Mangoola Mine,Reference,3757,Hunter Escarpment Ironbark Scrubby Low Forest,NA,56,280385,6422007,260
+28,Mangoola Mine,Reference,3757,Hunter Escarpment Ironbark Scrubby Low Forest,NA,56,280534,6421461,255

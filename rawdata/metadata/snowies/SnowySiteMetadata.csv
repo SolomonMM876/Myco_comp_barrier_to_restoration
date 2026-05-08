@@ -1,0 +1,33 @@
+﻿Plot,Site,Rehab_compl_yr,Easting,Northing,Treatment,Aspect,Aspect_deg,Slope,Elevation,Fire_Severity,Exposure_NW
+550,Tailrace,2010,622773,6034783,Rehab,North,359,7.8,560,unburnt,1278
+551,Tailrace,2010,622824,6034786,Rehab,North,19,3.6,560,unburnt,1278
+552,Tailrace,,622671,6034719,Ref,Northwest,333,11.6,575,Low,1278
+553,Deadman,2010,623234,6031176,Rehab,West,268,13.9,600,unburnt,1278
+554,Tailrace,,623624,6033494,Ref,Northeast,64,2.9,560,Very High,1078
+555,KaiserSandWash,2005,623906,6026869,Rehab,Northeast,62,10.2,1105,unburnt,778
+556,KaiserSandWash,2005,623835,6026951,Rehab,West,280,5.4,1110,unburnt,653
+557,Dogleg,2006,624234,6029283,Rehab,North,17,19.7,790,unburnt,1079
+558,Dogleg,2006,624261,6029362,Rehab,Northwest,311,18.7,765,unburnt,1079
+560,Deadman,2010,623236,6031146,Rehab,West,276,9.4,600,unburnt,1278
+561,Deadman,,623349,6031098,Ref,Southwest,246,29.5,630,Moderate,1079
+562,Deadman,,623186,6031509,Ref,West,291,7.5,590,High,1278
+563,Dogleg,,624137,6029394,Ref,North,2,20.8,785,High,1204
+564,Dogleg,,624350,6029380,Ref,West,282,22.9,795,Moderate,1000
+565,IslandBend,2010,636460,5982630,Rehab,Southwest,231,9.2,1060,unburnt,1079
+566,IslandBend,2010,636453,5982606,Rehab,Southwest,220,10.3,1060,unburnt,1079
+567,IslandBend,2010,636366,5982641,Rehab,Southwest,205,7.8,1060,unburnt,1079
+568,IslandBend,2010,636398,5982647,Rehab,Southwest,218,8.7,1060,unburnt,1079
+569,ValveHouse,2011,641609,5977243,Rehab,East,98,17.6,1040,unburnt,1477
+570,KaiserSandWash,,623886,6027144,Ref,Northwest,308,10,1085,Low ,477
+571,KauserSandWash,,623755,6026767,Ref,Southeast,137,11.8,1090,High,698
+572,IslandBend,,636569,5982670,Ref,Southwest,210,13.3,1080,Low,1000
+573,IslandBend,,637334,5981433,Ref,North,358,19.4,1030,Very High,954
+574,IslandBend,,637201,5981303,Ref,North,358,9.2,1070,Moderate,954
+575,ValveHouse,2011,641656,5977236,Rehab,North,17,8.7,1040,unburnt,1079
+576,ValveHouse,,641990,5976751,Ref,East,82,11.1,1060,Moderate,1146
+577,ValveHouse,,642330,5975271,Ref,Southeast,146,14.3,1020,Low,1204
+578,IslandBend,,636405,5982320,Ref,North,20,21.5,1060,High,1079
+596,TumutPonds,,625241,6018362,Ref,Northwest,315,22.8,1195,Low,1342
+597,TumutPonds,,625706,6019733,Ref,West,251,12,1205,Very High,1544
+598,TumutPonds,2007,625736,6019787,Rehab,West,257,10.2,1210,unburnt,1544
+599,TumutPonds,2007,625748,6019800,Rehab,West,270,21.3,1215,unburnt,1477

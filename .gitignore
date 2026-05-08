@@ -1,0 +1,40 @@
+# ── R / RStudio ──────────────────────────────────────────────────────────────
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# ── Pre-fitted models (too large for GitHub) ─────────────────────────────────
+models/**/*.RData
+
+# ── Raw sequencing data (too large for GitHub, ~40–50 MB each) ───────────────
+rawdata/ITS/
+
+# ── Binary Excel files (duplicates of the tracked CSV flatfiles) ─────────────
+rawdata/metadata/**/*.xlsx
+
+# ── Cached derived data ──────────────────────────────────────────────────────
+deriveddata/
+
+# ── Generated outputs (reproducible — regenerate by knitting analysis.Rmd) ──
+output/plots/
+output/tables/
+
+# ── OS / editor files ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# ── Temporary / build files ──────────────────────────────────────────────────
+*.log
+*.aux
+*.out
+analysis_cache/
+analysis_files/
+analysis.html
+.positai
+
+# ── AI agent files (not part of the research project) ────────────────────────
+AGENTS.md
+.gemini/

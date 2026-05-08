@@ -1,0 +1,24 @@
+Quadrat level data,
+Sample_id,Unique quadrat sample ID 
+Plot_id,Plot_ID number
+Site_id,Name of mine location
+Survey_Date,"Sample date, applies to date of soil sampling"
+Treatment,Reference or Rehab
+Subplot,"Suplots A,B,C,D within Plot"
+Patch,Either open (O) or tree (T). 
+PCT_Number,East Coast Classification Plant Community Type Number
+PCT_Name,East Coast Classification Plant Community Type Name
+Establishment,Establishment date
+Dbh_cm,Tree DBH (cm) adjacent to tree quadrat
+Tree sp.,Tree species adjacent to tree quadrat
+dist_Tree_m,Distance to nearest tree from open quadrat
+Foliage_Cover_<0.5,visual estimate of % foliage cover <0.5m high
+Logs_<0.5,visual estimate of log (>10cm dimeter) cover
+Litter_<0.5,visual estimate of litter cover
+Compost,visual estimate of compost cover %
+Cryptogam,visual estimate of cryptogam cover %
+Rock,visual estimate rock % cover
+Bare soil,visual estimate of % bare ground
+Shrub_>0.5,visual estimate of % shrub foliage cover>0.5m
+Tree>0.5,visual estimate of % tree foliage cover>0.5m
+Other,visual estimate of % foliage cover>0.5m not tree or shrubs

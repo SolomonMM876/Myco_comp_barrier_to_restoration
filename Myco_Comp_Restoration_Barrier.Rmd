@@ -1,0 +1,2949 @@
+---
+title: "Mycorrhizal Community Composition as a Barrier to Ecological Restoration"
+subtitle: "Reproducible Analysis Pipeline — Hunter Mining & Snowy Hydro Case Studies"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    number_sections: true
+    code_folding: hide
+    fig_width: 12
+    fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.align  = "center",
+  fig.retina = 2,
+  cache      = FALSE
+)
+```
+
+# Project Setup {.tabset}
+
+## Global Options
+
+Toggle these flags to control what gets re-run vs loaded from cache.
+
+```{r global-options}
+# ── Reproducibility Toggles ───────────────────────────────────────────────────
+# Set TRUE to rebuild processed data from raw files; FALSE loads cached RDS
+RELOAD_FROM_RAW <- TRUE
+
+# Set TRUE to re-run indicator taxa analysis; FALSE loads pre-existing CSV
+RERUN_INDICATORS <- TRUE
+
+# Set TRUE to re-compute HMSC associations & diagnostics from model objects
+# (models are NEVER re-fit here — only loaded from models/ directory)
+RECOMPUTE_HMSC <- TRUE
+
+# Set TRUE to re-run CCA ordistep model fitting (slow: ~999 permutations × 4
+# dataset/treatment combos). Set FALSE to load pre-fitted .RData files only.
+RERUN_CCA <- FALSE
+```
+
+## Libraries
+
+```{r libraries}
+# ── Core ──────────────────────────────────────────────────────────────────────
+library(tidyverse)
+library(sf)
+library(patchwork)
+
+# ── Statistics ────────────────────────────────────────────────────────────────
+library(lme4)
+library(car)
+library(broom.mixed)
+library(vegan)
+library(fossil)
+
+# ── HMSC ──────────────────────────────────────────────────────────────────────
+library(Hmsc)
+library(coda)
+library(circlize)
+
+# ── Tables & Export ───────────────────────────────────────────────────────────
+library(flextable)
+library(officer)
+
+# ── Mapping ───────────────────────────────────────────────────────────────────
+library(tmap)
+library(maptiles)
+
+# ── Indicator Species ─────────────────────────────────────────────────────────
+library(indicspecies)
+library(permute)
+
+# ── Plotting extras ──────────────────────────────────────────────────────────
+library(ggrepel)
+
+# Ensure dplyr::recode is available (masked by other pkgs)
+recode <- dplyr::recode
+select <- dplyr::select
+```
+
+## Paths
+
+```{r paths}
+# ── All paths relative to project root ────────────────────────────────────────
+proj_root <- here::here()
+
+# Raw data
+its_dir <- file.path(proj_root, "rawdata/ITS")
+meta_hunter <- file.path(proj_root, "rawdata/metadata/hunter")
+meta_snowies <- file.path(proj_root, "rawdata/metadata/snowies")
+
+# Pre-fitted models
+models_dir <- file.path(proj_root, "models")
+
+# Cached processed data
+derived_dir <- file.path(proj_root, "deriveddata")
+
+# Output
+plot_dir <- file.path(proj_root, "output/plots")
+table_dir <- file.path(proj_root, "output/tables")
+indicator_csv <- file.path(table_dir, "Table_Indicator_Taxa_Combined.csv")
+
+for (d in c(
+  derived_dir, plot_dir, table_dir,
+  file.path(plot_dir, "hmsc_diagnostics")
+)) {
+  dir.create(d, showWarnings = FALSE, recursive = TRUE)
+}
+```
+
+## Publication Theme
+
+```{r pub-theme}
+# ── Shared aesthetics used across all figures ─────────────────────────────────
+color_scheme <- c(Reference = "forestgreen", Rehab = "grey")
+
+pub_theme <- theme_bw() +
+  theme(
+    axis.title   = element_text(size = 16, face = "bold"),
+    axis.text    = element_text(size = 14, color = "black"),
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text  = element_text(size = 14),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    strip.text   = element_text(size = 14, face = "bold"),
+    plot.title   = element_text(size = 16, face = "bold", hjust = 0.5)
+  )
+```
+
+## Helper Functions
+
+```{r helpers}
+# ── Significance stars ────────────────────────────────────────────────────────
+get_stars <- function(p) {
+  if (is.na(p)) {
+    return("")
+  }
+  if (p < 0.001) {
+    return("***")
+  }
+  if (p < 0.01) {
+    return("**")
+  }
+  if (p < 0.05) {
+    return("*")
+  }
+  if (p < 0.1) {
+    return("+")
+  }
+  return("ns")
+}
+
+# ── Format p-values for tables ────────────────────────────────────────────────
+format_p_val <- function(p) {
+  ifelse(is.na(p), "NA",
+    ifelse(p < 0.0001, "< 0.0001",
+      ifelse(p < 0.001, "< 0.001",
+        ifelse(p <= 0.01, "< 0.01",
+          as.character(round(p, 3))
+        )
+      )
+    )
+  )
+}
+
+# ── LME statistics extractor (Treatment × Patch) ─────────────────────────────
+get_lme_stats <- function(data, response_var, random_effect = "(1 | Plot_ID)") {
+  formula_str <- paste(response_var, "~ Treat * Patch")
+  m1 <- try(lmer(as.formula(paste(formula_str, "+", random_effect)),
+    data = data
+  ), silent = TRUE)
+  if (inherits(m1, "try-error")) {
+    return(list(
+      p_treat = NA, p_patch = NA, p_inter = NA,
+      F_treat = NA, F_patch = NA, F_inter = NA,
+      df_treat = NA, df_patch = NA, df_inter = NA,
+      sig_str = "Stats Error", sig = FALSE
+    ))
+  }
+  res <- try(tidy(Anova(m1, test = "F")), silent = TRUE)
+  if (inherits(res, "try-error")) {
+    return(list(
+      p_treat = NA, p_patch = NA, p_inter = NA,
+      F_treat = NA, F_patch = NA, F_inter = NA,
+      df_treat = NA, df_patch = NA, df_inter = NA,
+      sig_str = "Anova Error", sig = FALSE
+    ))
+  }
+
+  extract_term <- function(term_name) {
+    row <- res %>% filter(term == term_name)
+    if (nrow(row) == 0) {
+      return(list(p = NA, F_val = NA, df = NA))
+    }
+    list(
+      p = row$p.value,
+      F_val = round(row$statistic, 1),
+      df = paste(row$df, round(row$Df.res, 0), sep = ",")
+    )
+  }
+
+  t <- extract_term("Treat")
+  pa <- extract_term("Patch")
+  i <- extract_term("Treat:Patch")
+
+  sig_str <- paste0(
+    "Treatment ", get_stars(t$p), "\n",
+    "Patch ", get_stars(pa$p), "\n",
+    "Interaction ", get_stars(i$p)
+  )
+
+  list(
+    p_treat = t$p, p_patch = pa$p, p_inter = i$p,
+    F_treat = t$F_val, F_patch = pa$F_val, F_inter = i$F_val,
+    df_treat = t$df, df_patch = pa$df, df_inter = i$df,
+    sig_str = sig_str,
+    sig = any(c(t$p, pa$p, i$p) < 0.05, na.rm = TRUE)
+  )
+}
+
+# ── Treatment-only LME ───────────────────────────────────────────────────────
+get_lme_stats_treat_only <- function(data, response_var,
+                                     random_effect = "(1 | Plot_ID)") {
+  formula_str <- paste(response_var, "~ Treat")
+  m1 <- try(lmer(as.formula(paste(formula_str, "+", random_effect)),
+    data = data
+  ), silent = TRUE)
+  if (inherits(m1, "try-error")) {
+    return(list(
+      p_treat = NA, F_treat = NA, df_treat = NA,
+      sig_str = "Stats Error", sig = FALSE
+    ))
+  }
+
+  res <- try(tidy(Anova(m1, test = "F")), silent = TRUE)
+  if (inherits(res, "try-error")) {
+    return(list(
+      p_treat = NA, F_treat = NA, df_treat = NA,
+      sig_str = "Anova Error", sig = FALSE
+    ))
+  }
+
+  row <- res %>% filter(term == "Treat")
+  if (nrow(row) == 0) {
+    return(list(
+      p_treat = NA, F_treat = NA, df_treat = NA,
+      sig_str = "No Treat term", sig = FALSE
+    ))
+  }
+
+  list(
+    p_treat = row$p.value,
+    F_treat = round(row$statistic, 1),
+    df_treat = paste(row$df, round(row$Df.res, 0), sep = ","),
+    sig_str = paste0("Treatment ", get_stars(row$p.value)),
+    sig = row$p.value < 0.05
+  )
+}
+
+# ── Relationship LME (y ~ x * Treat) ─────────────────────────────────────────
+get_rel_stats <- function(data, y_var, x_var, random_effect) {
+  formula_str <- paste(y_var, "~", x_var, "* Treat")
+  m1 <- try(lmer(as.formula(paste(formula_str, "+", random_effect)),
+    data = data
+  ), silent = TRUE)
+  if (inherits(m1, "try-error")) {
+    return(list(
+      p_treat = NA, p_xvar = NA, p_inter = NA,
+      sig_str = "Stats Error", sig = FALSE
+    ))
+  }
+  res <- try(tidy(Anova(m1, test = "F")), silent = TRUE)
+  if (inherits(res, "try-error")) {
+    return(list(
+      p_treat = NA, p_xvar = NA, p_inter = NA,
+      sig_str = "Anova Error", sig = FALSE
+    ))
+  }
+
+  extract <- function(term_name) {
+    row <- res %>% filter(term == term_name)
+    if (nrow(row) == 0) {
+      return(list(p = NA, F_val = NA, df = NA))
+    }
+    list(
+      p = row$p.value, F_val = round(row$statistic, 1),
+      df = paste(row$df, round(row$Df.res, 0), sep = ",")
+    )
+  }
+
+  t <- extract("Treat")
+  x <- extract(x_var)
+  i <- extract(paste0(x_var, ":Treat"))
+
+  sig_str <- paste0(
+    "Treatment ", get_stars(t$p), "\n",
+    "Covariate ", get_stars(x$p), "\n",
+    "Interaction ", get_stars(i$p)
+  )
+
+  list(
+    p_treat = t$p, p_xvar = x$p, p_inter = i$p,
+    F_treat = t$F_val, F_xvar = x$F_val, F_inter = i$F_val,
+    df_treat = t$df, df_xvar = x$df, df_inter = i$df,
+    sig_str = sig_str,
+    sig = any(c(t$p, x$p, i$p) < 0.05, na.rm = TRUE)
+  )
+}
+```
+
+# Data Loading
+
+This section loads both the Hunter Mining and Snowy Hydro datasets.
+On first run with `RELOAD_FROM_RAW = TRUE`, data is processed from raw
+CSV/TSV files and cached as RDS for fast subsequent loads.
+
+```{r load-data}
+taxlev <- "genus" # taxonomic level for OTU aggregation
+
+if (RELOAD_FROM_RAW || !file.exists(file.path(derived_dir, "hunter_dat.rds"))) {
+  cat("── Loading Hunter Mining from raw data ──\n")
+
+  # ── ITS ──
+  hunter_its <- read_tsv(file.path(its_dir, "hunter_ITS_long_20210604.txt")) %>%
+    mutate(Campaign = 2019) %>%
+    select(Sample, Treatment, OTU, Abundance, guild, kingdom:species) %>%
+    rename(Sample_ID = Sample) %>%
+    mutate(
+      Sample_ID = gsub("-", "", Sample_ID),
+      Sample_ID = gsub("^0", "", Sample_ID)
+    )
+
+  # ── Metadata (plot + quadrat + patch) ──
+  hunter_dat <- read_csv(file.path(meta_hunter, "FLATFILE-Hunter_Plot_Location_details.csv")) %>%
+    mutate(across(Plot_id, as.character)) %>%
+    st_as_sf(coords = c("Easting", "Northing"), crs = 32756) %>%
+    st_transform(4326) %>%
+    full_join(read_csv(file.path(meta_hunter, "FLATFILE-Hunter_Plot_Data.csv")) %>%
+      mutate(across(Plot_id, as.character)) %>% select(-Site_id)) %>%
+    full_join(read_csv(file.path(meta_hunter, "FLATFILE-Hunter_Quadrat_Data.csv"),
+      na = c("", "NA", "no data")
+    ) %>%
+      mutate(across(Plot_id, as.character)) %>%
+      rename(Establishment = Esstablishment, Survey_date = Survey_Date) %>%
+      select(Plot_id, Patch, Dbh_cm:Other) %>%
+      group_by(Plot_id, Patch) %>%
+      summarise(
+        across(`Tree sp.`, ~ paste(unique(.x), collapse = "-")),
+        across(where(is.numeric), ~ mean(.x))
+      ) %>%
+      mutate(`Tree sp.` = ifelse(`Tree sp.` == "NA", "", `Tree sp.`))) %>%
+    full_join(read_csv(file.path(meta_hunter, "FLATFILE-Hunter_Patch_Data.csv")) %>%
+      mutate(across(Plot_id, as.character)) %>% select(-Treatment, -Site_id)) %>%
+    mutate(
+      Survey_date = lubridate::dmy(Survey_date),
+      Leaf_N_P = total_nitrogen / (P_ppm / 10000),
+      Treatment = ifelse(Treatment == "Rehabilitated", "Rehab", Treatment),
+      Site_id = ifelse(Site_id == "Jerry's Plains", "Jerrys Plains", Site_id)
+    ) %>%
+    filter(!is.na(Plot_id)) %>%
+    rename(
+      Sample_ID = Sample_id, Treat = Treatment, Plot_ID = Plot_id, Site_ID = Site_id,
+      Leaf_Mn = Mn_ppm,
+      Exotic_Cover = EX_Cov, GG_cov = GG_Cov, Tree_cov = TG_Cov,
+      Logs = CWD, Forb_cov = FG_Cov, Shrub_cov = SG_Cov,
+      Fol_cov_short = `Foliage_Cover_<0.5`, Fol_cov_shrub = `Shrub_>0.5`,
+      Fol_cov_tree = `Tree>0.5`, dist_Tree = dist_Tree_m,
+      MIR_TOC = `MIR_TOC%`, P_mg_Kg = `Pmg/Kg`, EC_microS_cm = `ECmicroS/cm`,
+      MIR_HUM = `MIR_HUM%`, MIR_POC = `MIR_POC%`, MIR_ROC = `MIR_ROC%`,
+      MIR_TN = `MIR_TN%`,
+      Total_PLFA = PLFA_Total_biomass, Fungi_Bact = `PLFA_Fungi:bacteria`,
+      PHO = Enzymes_PHO, LAP = Enzymes_LAP, AB = Enzymes_AB,
+      BG = Enzymes_BG, CB = Enzymes_CB, `N/AG` = Enzymes_NAG, XYL = Enzymes_XYL,
+      reads.fungi = reads_fungi
+    ) %>%
+    select(
+      Sample_ID, Treat, Plot_ID, Site_ID, PCT_Name, Patch, Establishment,
+      Leaf_N_P, Leaf_Mn,
+      Exotic_Cover, GG_cov, Tree_cov, Logs, Forb_cov, Shrub_cov,
+      BAM_Litter, Stability_ind, Infiltration_ind, Nutrient_ind,
+      Fol_cov_short, Fol_cov_shrub, Fol_cov_tree,
+      MIR_TOC, P_mg_Kg, pH, EC_microS_cm, MIR_HUM, MIR_POC, MIR_ROC, MIR_TN,
+      Total_PLFA, PLFA_Fungi, PLFA_Arbuscular_mycorrhizae, Fungi_Bact,
+      PHO, LAP, AB, BG, CB, `N/AG`, XYL,
+      reads.fungi, obs_richness_fungi_ArbuscularMycorrhizal,
+      obs_richness_fungi_Ectomycorrhizal,
+      relabund_fungi_ArbuscularMycorrhizal, relabund_fungi_Ectomycorrhizal
+    ) %>%
+    rename(plfa_amf = PLFA_Arbuscular_mycorrhizae, plfa_fungi = PLFA_Fungi) %>%
+    mutate(
+      plfa_amf_rel = plfa_amf / Total_PLFA,
+      across(c(LAP, PHO, BAM_Litter), log10),
+      relabund_fungi_Ectomycorrhizal = log10(relabund_fungi_Ectomycorrhizal + 0.0005),
+      relabund_fungi_ArbuscularMycorrhizal = log10(relabund_fungi_ArbuscularMycorrhizal + 0.0005)
+    ) %>%
+    right_join(hunter_its %>%
+      rename(taxon = matches(taxlev)) %>%
+      filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal"), !is.na(taxon)) %>%
+      mutate(guild = recode(guild,
+        `Arbuscular Mycorrhizal` = "AM",
+        `Ectomycorrhizal` = "ECM"
+      )) %>%
+      unite("taxon", guild, taxon, sep = "__") %>%
+      group_by(Sample_ID, taxon) %>%
+      summarise(Abundance = sum(Abundance), .groups = "drop") %>%
+      pivot_wider(names_from = "taxon", values_from = "Abundance", values_fill = 0)) %>%
+    left_join(
+      hunter_its %>%
+        filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal")) %>%
+        mutate(guild = recode(guild,
+          `Arbuscular Mycorrhizal` = "ArbuscularMycorrhizal",
+          `Ectomycorrhizal` = "Ectomycorrhizal"
+        )) %>%
+        group_by(Sample_ID, guild) %>%
+        summarise(chao_richness = chao1(Abundance), .groups = "drop") %>%
+        pivot_wider(
+          names_from = guild, values_from = chao_richness,
+          names_prefix = "chao_richness_fungi_"
+        ),
+      by = "Sample_ID"
+    ) %>%
+    mutate(across(starts_with("chao_richness_fungi_"), ~ replace_na(.x, 0)))
+
+  # Derived tables
+  hunter_otus <- hunter_dat %>%
+    as.data.frame() %>%
+    column_to_rownames("Sample_ID") %>%
+    select(starts_with("ECM__"), starts_with("AM__"))
+  hunter_xy <- hunter_dat %>%
+    cbind(st_coordinates(.)) %>%
+    as.data.frame(row.names = .$Sample_ID) %>%
+    select(Plot_ID, X, Y)
+  hunter_preds <- hunter_dat %>%
+    as.data.frame() %>%
+    column_to_rownames("Sample_ID") %>%
+    select(!c(matches(c("Plot_ID", "Site_ID", "geometry")), contains("__")))
+  hunter_tax_gen <- hunter_its %>%
+    rename(taxon = genus) %>%
+    filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal"), !is.na(taxon)) %>%
+    mutate(guild = recode(guild,
+      `Arbuscular Mycorrhizal` = "AM",
+      `Ectomycorrhizal` = "ECM"
+    )) %>%
+    group_by(Treatment, guild, taxon) %>%
+    summarise(Abundance = sum(Abundance), .groups = "drop")
+
+  # ── Save cached ──
+  saveRDS(hunter_dat, file.path(derived_dir, "hunter_dat.rds"))
+  saveRDS(hunter_its, file.path(derived_dir, "hunter_its.rds"))
+  saveRDS(hunter_otus, file.path(derived_dir, "hunter_otus.rds"))
+  saveRDS(hunter_xy, file.path(derived_dir, "hunter_xy.rds"))
+  saveRDS(hunter_preds, file.path(derived_dir, "hunter_preds.rds"))
+  saveRDS(hunter_tax_gen, file.path(derived_dir, "hunter_tax_gen.rds"))
+  cat("✓ Hunter data cached to deriveddata/\n")
+} else {
+  cat("── Loading Hunter Mining from cache ──\n")
+  hunter_dat <- readRDS(file.path(derived_dir, "hunter_dat.rds"))
+  hunter_its <- readRDS(file.path(derived_dir, "hunter_its.rds"))
+  hunter_otus <- readRDS(file.path(derived_dir, "hunter_otus.rds"))
+  hunter_xy <- readRDS(file.path(derived_dir, "hunter_xy.rds"))
+  hunter_preds <- readRDS(file.path(derived_dir, "hunter_preds.rds"))
+  hunter_tax_gen <- readRDS(file.path(derived_dir, "hunter_tax_gen.rds"))
+}
+```
+
+```{r load-snowies}
+if (RELOAD_FROM_RAW || !file.exists(file.path(derived_dir, "snowies_dat.rds"))) {
+  cat("── Loading Snowy Hydro from raw data ──\n")
+
+  snowies_its <- read_tsv(file.path(its_dir, "snowies_ITS_long_20210604.txt")) %>%
+    mutate(Campaign = 2019) %>%
+    select(Sample, Treatment, OTU, Abundance, guild, kingdom:species) %>%
+    rename(Sample_ID = Sample)
+
+  snowies_dat <- read_csv(file.path(meta_snowies, "SNOWIES_PLOT_DATA_2019.csv")) %>%
+    mutate(across(Plot_ID, as.character)) %>%
+    st_as_sf(coords = c("Easting", "Northing"), crs = 32755) %>%
+    st_transform(4326) %>%
+    left_join(read_csv(file.path(meta_snowies, "SnowySiteMetadata.csv")) %>%
+      rename(Plot_ID = Plot, Establishment = Rehab_compl_yr) %>%
+      mutate(across(Plot_ID, as.character)) %>%
+      select(Plot_ID, Establishment)) %>%
+    right_join(read_csv(file.path(meta_snowies, "SNOWIES_QUADRAT_DATA_2019.csv"),
+      na = "N/A"
+    ) %>%
+      rename(
+        Litter_cov = `Litter _cov`, EC_microS_cm = `EC _microS_cm`,
+        Fol_cov_short = `Foliage_Cover_<0.5`,
+        Fol_cov_shrub = `Fol_cov_Shrub_>0.5m`,
+        Fol_cov_tree = `FC_Tree>0.5m high`
+      ) %>%
+      mutate(across(Plot_ID, as.character)) %>%
+      select(-Elevation:-ANPP)) %>%
+    select(
+      Sample_ID,
+      Treat = Treatment, Plot_ID, Site_ID, Subplot, Patch,
+      Establishment,
+      Fire_Severity_2003, ANPP,
+      Leaf_N_P, Leaf_Mn,
+      Exotic_Cover, Dominant_Euc, GG_cov, Tree_cov, Logs,
+      Acac_ha, mean_live_DBH, CV_DBH,
+      Litter_totalwt, Stability_ind, Rock, Bare_soil,
+      Fol_cov_short, Fol_cov_shrub, Fol_cov_tree, dist_Tree,
+      MIR_TOC, MIR_C_N, P_mg_Kg, pH, EC_microS_cm,
+      Total_PLFA, Fungi_comm, arbuscular_myc_comm, Fungi_Bact,
+      Abundance_inverts,
+      PHO, LAP,
+      reads.fungi, obs_richness_fungi_ArbuscularMycorrhizal,
+      obs_richness_fungi_Ectomycorrhizal,
+      relabund_fungi_ArbuscularMycorrhizal, relabund_fungi_Ectomycorrhizal,
+      Forb_Cov, Shrub_cov, Euc_live_ha, Infiltration_ind, Nutrient_ind,
+      Litter_cov, MIR_HUM, MIR_POC, MIR_ROC, MIR_TN, AB, BG, CB, `N/AG`, XYL
+    ) %>%
+    rename(plfa_amf = arbuscular_myc_comm, plfa_fungi = Fungi_comm) %>%
+    mutate(
+      plfa_amf_rel = plfa_amf / Total_PLFA,
+      across(c(LAP, PHO, Litter_totalwt), log10),
+      relabund_fungi_Ectomycorrhizal = log10(relabund_fungi_Ectomycorrhizal + 0.0005),
+      relabund_fungi_ArbuscularMycorrhizal = log10(relabund_fungi_ArbuscularMycorrhizal + 0.00005)
+    ) %>%
+    right_join(snowies_its %>%
+      rename(taxon = matches(taxlev)) %>%
+      filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal"), !is.na(taxon)) %>%
+      mutate(guild = recode(guild,
+        `Arbuscular Mycorrhizal` = "AM",
+        `Ectomycorrhizal` = "ECM"
+      )) %>%
+      unite("taxon", guild, taxon, sep = "__") %>%
+      group_by(Sample_ID, taxon) %>%
+      summarise(Abundance = sum(Abundance), .groups = "drop") %>%
+      pivot_wider(names_from = "taxon", values_from = "Abundance", values_fill = 0)) %>%
+    left_join(
+      snowies_its %>%
+        filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal")) %>%
+        mutate(guild = recode(guild,
+          `Arbuscular Mycorrhizal` = "ArbuscularMycorrhizal",
+          `Ectomycorrhizal` = "Ectomycorrhizal"
+        )) %>%
+        group_by(Sample_ID, guild) %>%
+        summarise(chao_richness = chao1(Abundance), .groups = "drop") %>%
+        pivot_wider(
+          names_from = guild, values_from = chao_richness,
+          names_prefix = "chao_richness_fungi_"
+        ),
+      by = "Sample_ID"
+    ) %>%
+    mutate(across(starts_with("chao_richness_fungi_"), ~ replace_na(.x, 0)))
+
+  # Derived tables
+  snowies_otus <- snowies_dat %>%
+    as.data.frame() %>%
+    column_to_rownames("Sample_ID") %>%
+    select(starts_with("ECM__"), starts_with("AM__"))
+  snowies_xy <- snowies_dat %>%
+    cbind(st_coordinates(.)) %>%
+    as.data.frame(row.names = .$Sample_ID) %>%
+    select(Plot_ID, Subplot, X, Y)
+  snowies_preds <- snowies_dat %>%
+    as.data.frame() %>%
+    column_to_rownames("Sample_ID") %>%
+    select(!c(matches(c("Plot_ID", "Site_ID", "Subplot", "geometry")), contains("__")))
+  snowies_tax_gen <- snowies_its %>%
+    rename(taxon = genus) %>%
+    filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal"), !is.na(taxon)) %>%
+    mutate(guild = recode(guild,
+      `Arbuscular Mycorrhizal` = "AM",
+      `Ectomycorrhizal` = "ECM"
+    )) %>%
+    group_by(Treatment, guild, taxon) %>%
+    summarise(Abundance = sum(Abundance), .groups = "drop")
+
+  saveRDS(snowies_dat, file.path(derived_dir, "snowies_dat.rds"))
+  saveRDS(snowies_its, file.path(derived_dir, "snowies_its.rds"))
+  saveRDS(snowies_otus, file.path(derived_dir, "snowies_otus.rds"))
+  saveRDS(snowies_xy, file.path(derived_dir, "snowies_xy.rds"))
+  saveRDS(snowies_preds, file.path(derived_dir, "snowies_preds.rds"))
+  saveRDS(snowies_tax_gen, file.path(derived_dir, "snowies_tax_gen.rds"))
+  cat("✓ Snowies data cached to deriveddata/\n")
+} else {
+  cat("── Loading Snowy Hydro from cache ──\n")
+  snowies_dat <- readRDS(file.path(derived_dir, "snowies_dat.rds"))
+  snowies_its <- readRDS(file.path(derived_dir, "snowies_its.rds"))
+  snowies_otus <- readRDS(file.path(derived_dir, "snowies_otus.rds"))
+  snowies_xy <- readRDS(file.path(derived_dir, "snowies_xy.rds"))
+  snowies_preds <- readRDS(file.path(derived_dir, "snowies_preds.rds"))
+  snowies_tax_gen <- readRDS(file.path(derived_dir, "snowies_tax_gen.rds"))
+}
+
+# ── Add back-transformed EcM relative abundance for raw-scale plotting ──
+hunter_dat <- hunter_dat %>%
+  mutate(
+    raw_relabund_fungi_Ectomycorrhizal =
+      pmax(0, 10^relabund_fungi_Ectomycorrhizal - 0.0005)
+  )
+snowies_dat <- snowies_dat %>%
+  mutate(
+    raw_relabund_fungi_Ectomycorrhizal =
+      pmax(0, 10^relabund_fungi_Ectomycorrhizal - 0.0005)
+  )
+
+cat("\n✓ Hunter Mining: ", nrow(hunter_dat), " samples loaded\n")
+cat("✓ Snowy Hydro:   ", nrow(snowies_dat), " samples loaded\n")
+```
+
+#Study Site Maps
+
+Interactive study site locations for both case studies using tmap view mode.
+For scripts used to create figures in manuscript see R_scripts/Site_maps.R
+
+```{r maps, fig.width=14, fig.height=7}
+# ── Map helper: build an interactive tmap ────────────────────────────────────
+build_figure <- function(dat, title = "") {
+  pts <- dat %>%
+    group_by(Plot_ID) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(Treat = factor(Treat, levels = c("Reference", "Rehab")))
+
+
+  tm_basemap(c("OpenStreetMap", "OpenTopoMap")) +
+    tm_shape(pts) +
+    tm_symbols(
+      fill = "Treat",
+      fill.scale = tm_scale_categorical(
+        values  = color_scheme,
+        labels  = c("Reference", "Restoration")
+      ),
+      fill.legend = tm_legend(title = paste(title, "– Treatment")),
+      col = "black",
+      size = .5,
+      lwd = 1,
+      popup.vars = c("Plot_ID", "Site_ID", "Treat")
+    )
+}
+
+# ── Switch to interactive mode ────────────────────────────────────────────────
+tmap_mode("view")
+
+# ── Save static exports (plot mode) before switching ─────────────────────────
+tmap_mode("plot")
+
+hunter_static <- build_figure(hunter_dat, title = "Hunter Mining")
+snowies_static <- build_figure(snowies_dat, title = "Snowy Hydro")
+
+tmap_save(hunter_static,
+  filename = file.path(plot_dir, "Figure_Map_Hunter.png"),
+  width = 10, height = 8, dpi = 300
+)
+tmap_save(snowies_static,
+  filename = file.path(plot_dir, "Figure_Map_Snowies.png"),
+  width = 10, height = 8, dpi = 300
+)
+
+# ── Render interactive maps ───────────────────────────────────────────────────
+# comment below if you want simple plot option
+tmap_mode("view")
+
+hunter_fig <- build_figure(hunter_dat, title = "Hunter Mining")
+snowies_fig <- build_figure(snowies_dat, title = "Snowy Hydro")
+
+hunter_static
+snowies_static
+```
+
+# Soil Characteristics
+
+Comparison of key soil abiotic properties between Reference and
+Rehabilitation sites for both case studies.
+
+```{r soil-plots, fig.width=12, fig.height=14} 
+# ── Soil variable specs ───────────────────────────────────────────────────────
+soil_vars <- list(
+  list(var = "MIR_TOC", label = "Total Organic Carbon (%)"),
+  list(var = "P_mg_Kg", label = "Colwell P (mg/kg)"),
+  list(var = "Total_PLFA", label = "Total PLFA Biomass")
+)
+
+make_soil_panel <- function(data, var, ylab, title, show_x = TRUE,
+                            random_eff = "(1 | Plot_ID)") {
+  stats <- get_lme_stats_treat_only(data, var, random_eff)
+  p <- ggplot(data, aes(x = Treat, y = !!sym(var), fill = Treat)) +
+    geom_boxplot(outlier.shape = NA, linewidth = 0.8) +
+    geom_jitter(width = 0.15, alpha = 0.5, size = 1.5) +
+    scale_fill_manual(values = color_scheme, guide = "none") +
+    labs(y = ylab, x = if (show_x) "Treatment" else "") +
+    scale_x_discrete(labels = c("Reference" = "Reference", "Rehab" = "Restoration")) +
+    (if (var == "P_mg_Kg") {
+      scale_y_continuous(
+        trans = scales::pseudo_log_trans(sigma = 25, base = 10),
+        breaks = c(0, 25, 50, 100, 250, 500),
+        labels = c("0", "25", "50", "100", "250", "500")
+      )
+    } else {
+      NULL
+    }) +
+    # annotate("text",
+    #   x = -Inf, y = Inf, label = stats$sig_str,
+    #   hjust = -0.05, vjust = 1.5, size = 5, fontface = "bold" ) +
+    pub_theme +
+    theme(axis.text.x = if (!show_x) element_blank() else element_text(size = 16))
+  p
+}
+
+# Build panels
+soil_panels <- list()
+for (i in seq_along(soil_vars)) {
+  sv <- soil_vars[[i]]
+  is_last <- i == length(soil_vars)
+  p_h <- make_soil_panel(hunter_dat, sv$var, sv$label, "Hunter Mining",
+    show_x = is_last
+  )
+  p_s <- make_soil_panel(snowies_dat, sv$var, "", "Snowy Hydro",
+    show_x = is_last, random_eff = "(1 | Plot_ID / Subplot)"
+  )
+  soil_panels[[i]] <- p_h + p_s
+}
+
+# Column titles
+title_h <- ggplot() +
+  annotate("text",
+    x = .5, y = .5, label = "Hunter Mining",
+    size = 6, fontface = "bold"
+  ) +
+  theme_void()
+title_s <- ggplot() +
+  annotate("text",
+    x = .5, y = .5, label = "Snowy Hydro",
+    size = 6, fontface = "bold"
+  ) +
+  theme_void()
+titles <- title_h + title_s
+
+# Create tag labels for plots
+tag_labels <- character(length(soil_panels) * 2)
+for (i in seq_along(soil_panels)) {
+  tag_labels[2 * i - 1] <- paste0(letters[i], ")") # Hunter plot gets tag
+  tag_labels[2 * i] <- "" # Snowy plot gets blank
+}
+
+soil_composite <- titles / wrap_plots(soil_panels, ncol = 1) +
+  plot_layout(heights = c(0.5, length(soil_vars) * 4)) +
+  plot_annotation(tag_levels = list(c("", "", tag_labels))) &
+  theme(plot.tag = element_text(face = "bold", size = 14))
+
+ggsave(file.path(plot_dir, "Figure_Soil_Characteristics_Combined.png"),
+  plot = soil_composite, width = 12, height = 14, dpi = 300, bg = "white"
+)
+print(soil_composite)
+```
+
+# Environmental PCA
+
+Principal component analysis of environmental predictors, coloured by
+treatment, with variable loadings overlaid.
+
+```{r pca-plots, fig.width=14, fig.height=7}
+# ── Variable rename map for clean axis labels ─────────────────────────────────
+var_rename_map <- c(
+  MIR_TOC = "TOC", P_mg_Kg = "P", pH = "pH", EC_microS_cm = "EC",
+  MIR_HUM = "Humic C", MIR_POC = "POC", MIR_ROC = "ROC", MIR_TN = "TN",
+  Total_PLFA = "Total PLFA", plfa_fungi = "Fungal PLFA", plfa_amf = "AMF PLFA",
+  Fungi_Bact = "F:B ratio", Stability_ind = "Stability", Exotic_Cover = "Exotic cover",
+  GG_cov = "Grass cover", Tree_cov = "Tree cover", Logs = "CWD",
+  Fol_cov_short = "Ground cover", Fol_cov_shrub = "Shrub cover",
+  Fol_cov_tree = "Tree FC", BAM_Litter = "Litter", PHO = "PHO", LAP = "LAP",
+  Leaf_N_P = "Leaf N:P", Leaf_Mn = "Leaf Mn",
+  relabund_fungi_Ectomycorrhizal = "EcM RA", relabund_fungi_ArbuscularMycorrhizal = "AM RA",
+  Infiltration_ind = "Infiltration", Nutrient_ind = "Nutrient index",
+  Litter_totalwt = "Litter wt", Rock = "Rock", Bare_soil = "Bare soil",
+  dist_Tree = "Dist. tree", MIR_C_N = "C:N", Abundance_inverts = "Invertebrates",
+  Fire_Severity_2003 = "Fire 2003", ANPP = "ANPP",
+  Acac_ha = "Acacia density", mean_live_DBH = "Mean DBH", CV_DBH = "CV DBH"
+)
+
+run_pca_plot <- function(preds, title_text, tag_label) {
+  # Mirror original: drop Establishment, fungal metrics, then NA rows
+  pca_clean <- preds %>%
+    select(-any_of("Establishment")) %>%
+    select(!matches("relabund|richness", ignore.case = TRUE)) %>%
+    drop_na()
+
+  # Split numeric matrix and metadata (Treat stays attached)
+  site_matrix <- pca_clean %>% select(where(is.numeric))
+  site_meta <- pca_clean %>% select(Treat, any_of(c("Site_ID", "Patch")))
+
+  # PCA via vegan::rda (correlation-based scaling)
+  pca_res <- rda(site_matrix, scale = TRUE)
+
+  # Variance explained
+  var_exp <- summary(pca_res)$cont$importance
+  axis_1 <- round(var_exp[2, 1] * 100, 1)
+  axis_2 <- round(var_exp[2, 2] * 100, 1)
+
+  # Site scores with Treat bound directly (no match() needed — rows align)
+  pca_scores <- scores(pca_res, display = "sites") %>%
+    as.data.frame() %>%
+    bind_cols(site_meta)
+
+  # Loadings, scaled and top 8 by magnitude
+  loadings <- scores(pca_res, display = "species", choices = c(1, 2)) %>%
+    as.data.frame() %>%
+    rownames_to_column("Variable") %>%
+    mutate(PC1 = PC1 * 1.5, PC2 = PC2 * 1.5) %>%
+    mutate(loading_strength = sqrt(PC1^2 + PC2^2)) %>%
+    arrange(desc(loading_strength)) %>%
+    slice_head(n = 8) %>%
+    mutate(Variable = dplyr::recode(Variable, !!!var_rename_map))
+
+  ggplot() +
+    geom_point(
+      data = pca_scores,
+      aes(x = PC1, y = PC2, color = Treat, fill = Treat),
+      size = 4, alpha = 0.7, shape = 21, stroke = 0.5
+    ) +
+    stat_ellipse(
+      data = pca_scores,
+      aes(x = PC1, y = PC2, color = Treat),
+      level = 0.95, linetype = 2, linewidth = 0.8
+    ) +
+    geom_segment(
+      data = loadings,
+      aes(x = 0, y = 0, xend = PC1, yend = PC2),
+      arrow = arrow(length = unit(0.2, "cm"), type = "closed"),
+      color = "gray30", linewidth = 0.5, alpha = 0.7
+    ) +
+    geom_text_repel(
+      data = loadings,
+      aes(x = PC1, y = PC2, label = Variable),
+      size = 4, color = "gray20", fontface = "italic",
+      box.padding = 0.5, max.overlaps = 20
+    ) +
+    scale_color_manual(
+      values = color_scheme, name = "Treatment",
+      labels = c("Reference" = "Reference", "Rehab" = "Restoration")
+    ) +
+    scale_fill_manual(
+      values = color_scheme, name = "Treatment",
+      labels = c("Reference" = "Reference", "Rehab" = "Restoration")
+    ) +
+    scale_x_continuous(expand = expansion(mult = 0.2)) +
+    labs(
+      x     = paste0("PC1 (", axis_1, "%)"),
+      y     = paste0("PC2 (", axis_2, "%)"),
+      title = title_text,
+      tag   = tag_label
+    ) +
+    pub_theme +
+    theme(
+      plot.tag = element_text(size = 16, face = "bold"),
+      aspect.ratio = 1
+    )
+}
+
+p_pca_h <- run_pca_plot(hunter_preds, "Hunter Mining", "a)")
+p_pca_s <- run_pca_plot(snowies_preds, "Snowy Hydro", "b)")
+
+pca_composite <- p_pca_h + p_pca_s +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+ggsave(file.path(plot_dir, "Figure_PCA_Combined.png"),
+  plot = pca_composite, width = 14, height = 7, dpi = 300, bg = "white"
+)
+
+print(pca_composite)
+```
+
+# Mycorrhizal Community Comparisons
+
+Box plots comparing EcM and AM richness and relative abundance
+
+## Treatment-only Analysis
+
+```{r myco-treatment-only, fig.height=16, fig.width=14, message=FALSE, warning=FALSE}
+response_vars <- c(
+  "chao_richness_fungi_Ectomycorrhizal",
+  "relabund_fungi_Ectomycorrhizal",
+  "chao_richness_fungi_ArbuscularMycorrhizal",
+  "relabund_fungi_ArbuscularMycorrhizal"
+)
+
+var_names <- c(
+  chao_richness_fungi_Ectomycorrhizal = "EcM Chao Richness",
+  relabund_fungi_Ectomycorrhizal = "EcM Relative Abundance",
+  chao_richness_fungi_ArbuscularMycorrhizal = "AM Chao Richness",
+  relabund_fungi_ArbuscularMycorrhizal = "AM Relative Abundance (log10)"
+)
+
+combined_plots_t <- list()
+stats_table_t <- data.frame()
+row_counter_t <- 0
+
+for (var in response_vars) {
+  h_st <- get_lme_stats_treat_only(hunter_dat, var, "(1 | Plot_ID)")
+  s_st <- get_lme_stats_treat_only(snowies_dat, var, "(1 | Plot_ID / Subplot)")
+
+  if (h_st$sig || s_st$sig) {
+    row_counter_t <- row_counter_t + 1
+    is_last <- (var == response_vars[length(response_vars)])
+    plot_var <- if (grepl("relabund_fungi_Ectomycorrhizal", var)) {
+      paste0("raw_", var)
+    } else {
+      var
+    }
+
+    make_treat_box <- function(data, stats, ylab) {
+      ggplot(data, aes(x = Treat, y = !!sym(plot_var), fill = Treat)) +
+        geom_boxplot(outlier.shape = NA, linewidth = 1) +
+        geom_jitter(width = 0.15, alpha = 0.7, size = 1.1) +
+        scale_fill_manual(values = color_scheme, guide = "none") +
+        scale_x_discrete(labels = c("Reference" = "Reference", "Rehab" = "Restoration")) +
+        labs(x = "", y = ylab) +
+        annotate("text",
+          x = -Inf, y = Inf, label = stats$sig_str,
+          hjust = -0.05, vjust = 1.5, size = 5, fontface = "bold"
+        ) +
+        pub_theme +
+        theme(
+          axis.text.x = if (!is_last) element_blank() else element_text(size = 14),
+          axis.title.x = element_blank(),
+          axis.text.y = element_text(size = 14), axis.title.y = element_text(size = 16)
+        )
+    }
+
+    combined_plots_t[[var]] <-
+      make_treat_box(hunter_dat, h_st, var_names[var]) +
+      make_treat_box(snowies_dat, s_st, "")
+
+    for (ds in list(list(nm = "Hunter", st = h_st), list(nm = "Snowy", st = s_st))) {
+      stats_table_t <- rbind(stats_table_t, data.frame(
+        Variable = var_names[var], Dataset = ds$nm,
+        Treatment_df = ds$st$df_treat, Treatment_F = ds$st$F_treat,
+        Treatment_p = ds$st$p_treat, stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+if (length(combined_plots_t) > 0) {
+  titles_t <- (ggplot() +
+    annotate("text",
+      x = .5, y = .5, label = "Hunter Mining",
+      size = 6, fontface = "bold"
+    ) +
+    theme_void()) +
+    (ggplot() +
+      annotate("text",
+        x = .5, y = .5, label = "Snowy Hydro",
+        size = 6, fontface = "bold"
+      ) +
+      theme_void())
+
+  n_t <- length(combined_plots_t)
+  tags_t <- character(n_t * 2)
+  for (i in seq_len(n_t)) {
+    tags_t[2 * i - 1] <- paste0(letters[i], ")")
+    tags_t[2 * i] <- ""
+  }
+
+  treat_composite <- titles_t / wrap_plots(combined_plots_t, ncol = 1) +
+    plot_layout(heights = c(0.5, n_t * 4)) +
+    plot_annotation(tag_levels = list(c("", "", tags_t))) &
+    theme(plot.tag = element_text(face = "bold"))
+
+  ggsave(file.path(plot_dir, "Figure_Mycorrhizal_Communities_Treatment_Only.png"),
+    plot = treat_composite, width = 14, height = n_t * 4 + 2, dpi = 300, bg = "white"
+  )
+  print(treat_composite)
+}
+```
+
+## Treatment × Patch Interaction
+
+```{r myco-boxplots, fig.width=14, fig.height=16, warning=FALSE, message=FALSE}
+combined_plots <- list()
+stats_table <- data.frame()
+row_counter <- 0
+
+for (var in response_vars) {
+  hunter_stats <- get_lme_stats(hunter_dat, var, "(1 | Plot_ID)")
+  snowy_stats <- get_lme_stats(snowies_dat, var, "(1 | Plot_ID / Subplot)")
+
+  if (hunter_stats$sig || snowy_stats$sig) {
+    row_counter <- row_counter + 1
+    is_last <- (var == "relabund_fungi_ArbuscularMycorrhizal")
+
+    plot_var <- if (grepl("relabund_fungi_Ectomycorrhizal", var)) {
+      paste0("raw_", var)
+    } else {
+      var
+    }
+
+    p_h <- ggplot(hunter_dat, aes(x = Patch, y = !!sym(plot_var), fill = Treat)) +
+      geom_boxplot(outlier.shape = NA, linewidth = 1) +
+      geom_jitter(
+        position = position_jitterdodge(jitter.width = 0.1),
+        alpha = 0.5, size = 1.1
+      ) +
+      scale_fill_manual(
+        values = color_scheme,
+        labels = c("Reference" = "Reference", "Rehab" = "Restoration"),
+        name = "Treatment"
+      ) +
+      scale_x_discrete(labels = c("O" = "Open", "T" = "Beneath Trees")) +
+      labs(x = "Patch", y = var_names[var]) +
+      annotate("text",
+        x = -Inf, y = Inf, label = hunter_stats$sig_str,
+        hjust = -0.05, vjust = 1.1, size = 5, fontface = "bold", lineheight = 1
+      ) +
+      pub_theme +
+      theme(
+        legend.position = "none",
+        axis.text.x = if (!is_last) element_blank() else element_text(size = 14),
+        axis.title.x = if (!is_last) element_blank() else element_text(size = 16),
+        axis.text.y = element_text(size = 14), axis.title.y = element_text(size = 16)
+      )
+
+    p_s <- ggplot(snowies_dat, aes(x = Patch, y = !!sym(plot_var), fill = Treat)) +
+      geom_boxplot(outlier.shape = NA, linewidth = 1) +
+      geom_jitter(
+        position = position_jitterdodge(jitter.width = 0.1),
+        alpha = 0.5, size = 1.1
+      ) +
+      scale_fill_manual(
+        values = color_scheme,
+        labels = c("Reference" = "Reference", "Rehab" = "Restoration"),
+        name = "Treatment"
+      ) +
+      scale_x_discrete(labels = c("O" = "Open", "T" = "Beneath Trees")) +
+      labs(x = "Patch", y = "") +
+      annotate("text",
+        x = -Inf, y = Inf, label = snowy_stats$sig_str,
+        hjust = -0.05, vjust = 1.2, size = 5, fontface = "bold", lineheight = 1
+      ) +
+      pub_theme +
+      theme(
+        legend.position = "none",
+        axis.text.x = if (!is_last) element_blank() else element_text(size = 14),
+        axis.title.x = if (!is_last) element_blank() else element_text(size = 16),
+        axis.text.y = element_text(size = 14), axis.title.y = element_text(size = 16)
+      )
+
+    combined_plots[[var]] <- p_h + p_s
+
+    # Accumulate stats
+    for (ds in list(
+      list(nm = "Hunter", st = hunter_stats),
+      list(nm = "Snowy", st = snowy_stats)
+    )) {
+      stats_table <- rbind(stats_table, data.frame(
+        Variable = var_names[var], Dataset = ds$nm,
+        Treatment_df = ds$st$df_treat, Treatment_F = ds$st$F_treat,
+        Treatment_p = ds$st$p_treat,
+        Patch_df = ds$st$df_patch, Patch_F = ds$st$F_patch,
+        Patch_p = ds$st$p_patch,
+        Interaction_df = ds$st$df_inter, Interaction_F = ds$st$F_inter,
+        Interaction_p = ds$st$p_inter,
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+if (length(combined_plots) > 0) {
+  titles <- (ggplot() +
+    annotate("text",
+      x = .5, y = .5, label = "Hunter Mining",
+      size = 6, fontface = "bold"
+    ) +
+    theme_void()) +
+    (ggplot() +
+      annotate("text",
+        x = .5, y = .5, label = "Snowy Hydro",
+        size = 6, fontface = "bold"
+      ) +
+      theme_void())
+
+  n_plots <- length(combined_plots)
+  tag_labels <- character(n_plots * 2)
+  for (i in seq_len(n_plots)) {
+    tag_labels[2 * i - 1] <- paste0(letters[i], ")")
+    tag_labels[2 * i] <- ""
+  }
+
+  box_composite <- titles / wrap_plots(combined_plots, ncol = 1) +
+    plot_layout(heights = c(0.5, n_plots * 4), guides = "collect") +
+    plot_annotation(tag_levels = list(c("", "", tag_labels))) &
+    theme(
+      plot.tag = element_text(face = "bold"),
+      legend.position = "bottom",
+      legend.text = element_text(size = 14),
+      legend.title = element_text(size = 16),
+      legend.key.size = unit(1.2, "cm")
+    )
+
+  ggsave(file.path(plot_dir, "Figure_Mycorrhizal_Communities_Combined.png"),
+    plot = box_composite, width = 14, height = 16, dpi = 300, bg = "white"
+  )
+  print(box_composite)
+}
+```
+
+##  Statistics Tables for EcM and AM richness and relative abundance 
+
+```{r myco-stats-tables}
+if (nrow(stats_table) > 0) {
+  st <- stats_table
+  st$Treatment_p <- format_p_val(st$Treatment_p)
+  st$Patch_p <- format_p_val(st$Patch_p)
+  st$Interaction_p <- format_p_val(st$Interaction_p)
+
+  ft <- flextable(st) %>%
+    set_header_labels(
+      Variable = "Response Variable", Dataset = "Dataset",
+      Treatment_df = "df", Treatment_F = "F", Treatment_p = "p-value",
+      Patch_df = "df", Patch_F = "F", Patch_p = "p-value",
+      Interaction_df = "df", Interaction_F = "F", Interaction_p = "p-value"
+    ) %>%
+    add_header_row(
+      values = c("", "", "Treatment", "Patch", "Treatment × Patch"),
+      colwidths = c(1, 1, 3, 3, 3)
+    ) %>%
+    bold(part = "header") %>%
+    autofit()
+
+  save_as_docx(ft, path = file.path(table_dir, "Table_Mycorrhizal_Rich_RA_Stats.docx"))
+}
+
+ft
+```
+
+# Mycorrhizal Guild Relationships
+
+Scatter plots testing the relationship between EcM and AM fungi
+(richness and relative abundance) across treatments.
+
+```{r myco-relationships, fig.width=12, fig.height=12, message=FALSE, warning=FALSE}
+# Recode for these plots
+hunter_dat_r <- hunter_dat %>%
+  mutate(Treat = fct_recode(Treat, "Restoration" = "Rehab"))
+snowies_dat_r <- snowies_dat %>%
+  mutate(Treat = fct_recode(Treat, "Restoration" = "Rehab"))
+
+relationships <- list(
+  ecm_rel_vs_am_rel = list(
+    y = "relabund_fungi_Ectomycorrhizal",
+    x = "relabund_fungi_ArbuscularMycorrhizal",
+    y_name = "EcM Relative Abundance (log10)",
+    x_name = "AM Relative Abundance (log10)"
+  ),
+  ecm_chao_vs_am_chao = list(
+    y = "chao_richness_fungi_Ectomycorrhizal",
+    x = "chao_richness_fungi_ArbuscularMycorrhizal",
+    y_name = "EcM Chao Richness",
+    x_name = "AM Chao Richness"
+  )
+)
+
+rel_plots <- list()
+rel_stats <- data.frame()
+rel_counter <- 0
+# redefine colorscheme here
+color_scheme_rehab <- c(Reference = "forestgreen", Restoration = "grey")
+
+for (rel_name in names(relationships)) {
+  rel <- relationships[[rel_name]]
+  h_st <- get_rel_stats(hunter_dat_r, rel$y, rel$x, "(1 | Plot_ID)")
+  s_st <- get_rel_stats(snowies_dat_r, rel$y, rel$x, "(1 | Plot_ID / Subplot)")
+
+  if (h_st$sig || s_st$sig) {
+    rel_counter <- rel_counter + 1
+
+    make_rel_plot <- function(data, stats, ylab, tag = NULL) {
+      ggplot(data, aes(x = !!sym(rel$x), y = !!sym(rel$y), color = Treat)) +
+        geom_point(alpha = 0.9, size = 2) +
+        geom_smooth(method = "lm", aes(fill = Treat), alpha = 0.3, linewidth = 1.2) +
+        scale_color_manual(values = color_scheme_rehab, name = "Treatment") +
+        scale_fill_manual(values = color_scheme_rehab, name = "Treatment") +
+        labs(x = rel$x_name, y = ylab, tag = tag) +
+        annotate("text",
+          x = -Inf, y = Inf, label = stats$sig_str,
+          hjust = -0.05, vjust = 1.1, size = 4, fontface = "bold", lineheight = 1
+        ) +
+        pub_theme +
+        theme(
+          legend.position = "bottom",
+          plot.tag = element_text(size = 14, face = "bold")
+        )
+    }
+
+    p_h <- make_rel_plot(
+      hunter_dat_r, h_st, rel$y_name,
+      paste0(letters[rel_counter], ")")
+    )
+    p_s <- make_rel_plot(snowies_dat_r, s_st, "")
+    rel_plots[[rel_name]] <- p_h + p_s
+
+    # Accumulate statistics for table
+    for (ds in list(list(nm = "Hunter", st = h_st), list(nm = "Snowy", st = s_st))) {
+      rel_stats <- rbind(rel_stats, data.frame(
+        Relationship = rel$y_name,
+        Covariate = rel$x_name,
+        Dataset = ds$nm,
+        Treatment_df = ds$st$df_treat, Treatment_F = ds$st$F_treat,
+        Treatment_p = ds$st$p_treat,
+        Covariate_df = ds$st$df_xvar, Covariate_F = ds$st$F_xvar,
+        Covariate_p = ds$st$p_xvar,
+        Interaction_df = ds$st$df_inter, Interaction_F = ds$st$F_inter,
+        Interaction_p = ds$st$p_inter,
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+if (length(rel_plots) > 0) {
+  titles_r <- (ggplot() +
+    annotate("text",
+      x = .5, y = .5, label = "Hunter Mining",
+      size = 6, fontface = "bold"
+    ) +
+    theme_void()) +
+    (ggplot() +
+      annotate("text",
+        x = .5, y = .5, label = "Snowy Hydro",
+        size = 6, fontface = "bold"
+      ) +
+      theme_void())
+
+  rel_composite <- titles_r / wrap_plots(rel_plots, ncol = 1) +
+    plot_layout(heights = c(0.5, length(rel_plots) * 6), guides = "collect") &
+    theme(legend.position = "bottom")
+
+  ggsave(file.path(plot_dir, "Figure_Mycorrhizal_Relationships_Combined.png"),
+    plot = rel_composite, width = 12, height = 12, dpi = 300, bg = "white"
+  )
+  print(rel_composite)
+}
+```
+
+## Statistics Table for Mycorrhizal Guild Relationships
+
+```{r myco-rel-stats-table}
+if (nrow(rel_stats) > 0) {
+  rs <- rel_stats
+  rs$Treatment_p <- format_p_val(rs$Treatment_p)
+  rs$Covariate_p <- format_p_val(rs$Covariate_p)
+  rs$Interaction_p <- format_p_val(rs$Interaction_p)
+
+  ft_rel <- flextable(rs) %>%
+    set_header_labels(
+      Relationship   = "Relationship",
+      Covariate      = "Covariate",
+      Dataset        = "Dataset",
+      Treatment_df   = "df",   Treatment_F   = "F",   Treatment_p   = "p-value",
+      Covariate_df   = "df",   Covariate_F   = "F",   Covariate_p   = "p-value",
+      Interaction_df = "df",   Interaction_F = "F",   Interaction_p = "p-value"
+    ) %>%
+    add_header_row(
+      values    = c("", "", "", "Treatment", "Covariate", "Treatment × Covariate"),
+      colwidths = c(1, 1, 1, 3, 3, 3)
+    ) %>%
+    align(align = "center", part = "all") %>%
+    align(j = c(1, 2, 3), align = "left", part = "body") %>%
+    bold(part = "header") %>%
+    autofit()
+
+  save_as_docx(ft_rel, path = file.path(
+    table_dir, "Table_Mycorrhizal_Relationships_Statistics.docx"
+  ))
+}
+
+ft_rel
+```
+
+# PLFA–DNA Comparison
+
+Validation of AM fungal relative abundance estimates from ITS sequencing
+against PLFA biomarker data.
+
+```{r plfa-dna, fig.width=10, fig.height=5, message=FALSE}
+# ── Hunter PLFA data ──────────────────────────────────────────────────────────
+hunter_plfa <- hunter_its %>%
+  left_join(
+    hunter_dat %>% as.data.frame() %>%
+      select(
+        Sample_ID, Treat, Plot_ID, Site_ID, Patch,
+        Total_PLFA, plfa_fungi, plfa_amf, reads.fungi
+      ),
+    by = "Sample_ID"
+  ) %>%
+  filter(!is.na(reads.fungi)) %>%
+  mutate(Study = "Hunter Mining") %>%
+  group_by(Study, Site_ID, Plot_ID, Patch, Treatment = Treat) %>%
+  summarise(
+    reads_fungi = sum(Abundance),
+    reads_amf = sum(Abundance[guild == "Arbuscular Mycorrhizal"], na.rm = TRUE),
+    plfa_total = Total_PLFA[1], plfa_fungi = plfa_fungi[1], plfa_amf = plfa_amf[1],
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(plfa_total)) %>%
+  mutate(
+    relabund_amf_plfa = plfa_amf / (plfa_amf + plfa_fungi),
+    relabund_amf_reads_log10 = log10((reads_amf + 0.5) / (reads_fungi + 0.5))
+  )
+
+# ── Snowies PLFA data ─────────────────────────────────────────────────────────
+snowies_plfa <- snowies_its %>%
+  left_join(
+    snowies_dat %>% as.data.frame() %>%
+      select(
+        Sample_ID, Treat, Plot_ID, Site_ID, Patch,
+        Total_PLFA, plfa_fungi, plfa_amf, reads.fungi
+      ),
+    by = "Sample_ID"
+  ) %>%
+  filter(!is.na(reads.fungi)) %>%
+  mutate(Study = "Snowy Hydro") %>%
+  group_by(Study, Site_ID, Plot_ID, Patch, Treatment = Treat) %>%
+  summarise(
+    reads_fungi = sum(Abundance),
+    reads_amf = sum(Abundance[guild == "Arbuscular Mycorrhizal"], na.rm = TRUE),
+    plfa_total = Total_PLFA[1], plfa_fungi = plfa_fungi[1], plfa_amf = plfa_amf[1],
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(plfa_total)) %>%
+  mutate(
+    relabund_amf_plfa = plfa_amf / (plfa_amf + plfa_fungi),
+    relabund_amf_reads_log10 = log10((reads_amf + 0.5) / (reads_fungi + 0.5))
+  )
+
+combined_plfa <- bind_rows(hunter_plfa, snowies_plfa) %>%
+  filter(!is.na(relabund_amf_plfa), !is.na(relabund_amf_reads_log10)) %>%
+  mutate(Treatment = factor(Treatment,
+    levels = c("Reference", "Rehab"),
+    labels = c("Reference", "Restoration")
+  ))
+
+# R² labels per group
+lm_label <- function(df) {
+  mod <- lm(relabund_amf_reads_log10 ~ relabund_amf_plfa, data = df)
+  r2 <- summary(mod)$r.squared
+  pval <- summary(mod)$coefficients[2, 4]
+  sig <- case_when(
+    pval < 0.001 ~ "***", pval < 0.01 ~ "**",
+    pval < 0.05 ~ "*", TRUE ~ "ns"
+  )
+  sprintf("R² = %.2f%s", r2, sig)
+}
+
+stat_labels <- combined_plfa %>%
+  group_by(Study, Treatment) %>%
+  group_modify(~ tibble(label = lm_label(.x))) %>%
+  ungroup() %>%
+  mutate(
+    x = if_else(Study == "Hunter Mining", -4.9, -4.4),
+    y = case_when(
+      Study == "Hunter Mining" & Treatment == "Reference" ~ 0.97,
+      Study == "Hunter Mining" & Treatment == "Restoration" ~ 0.91,
+      Study == "Snowy Hydro" & Treatment == "Reference" ~ 0.60,
+      Study == "Snowy Hydro" & Treatment == "Restoration" ~ 0.55
+    )
+  )
+
+make_plfa_plot <- function(study, tag) {
+  d <- combined_plfa %>% filter(Study == study)
+  sl <- stat_labels %>% filter(Study == study)
+  ggplot(d, aes(
+    x = relabund_amf_reads_log10, y = relabund_amf_plfa,
+    colour = Treatment, fill = Treatment
+  )) +
+    geom_point(alpha = 0.9, size = 2.5) +
+    geom_smooth(method = "lm", se = TRUE, alpha = 0.4, linewidth = 1) +
+    scale_colour_manual(
+      values = color_scheme_rehab,
+      labels = c("Reference", "Restoration")
+    ) +
+    scale_fill_manual(
+      values = color_scheme_rehab,
+      labels = c("Reference", "Restoration")
+    ) +
+    labs(
+      x = "AM Relative Abundance (log10 reads)",
+      y = "AM Relative Abundance (PLFA)",
+      title = study, tag = tag
+    ) +
+    geom_text(
+      data = sl,
+      aes(x = x, y = y, label = label, colour = Treatment),
+      hjust = 0, vjust = 0, size = 3.5, fontface = "bold",
+      show.legend = FALSE, inherit.aes = FALSE
+    ) +
+    theme_bw(base_size = 14) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.tag = element_text(face = "bold", size = 16)
+    )
+}
+
+p_plfa <- make_plfa_plot("Hunter Mining", "a)") +
+  make_plfa_plot("Snowy Hydro", "b)") +
+  plot_layout(guides = "collect") & theme(legend.position = "bottom")
+
+ggsave(file.path(plot_dir, "plfa_dna_comparison_combined.png"),
+  plot = p_plfa, width = 9, height = 4.5, dpi = 300, bg = "white"
+)
+print(p_plfa)
+```
+
+# Indicator Taxa Analysis
+
+Indicator species analysis (IndVal) identifies taxa significantly
+associated with Reference or Rehabilitation treatments.
+
+**Note**: The pre-generated indicator taxa table is stored in
+`table_dir/Table_Indicator_Taxa_Combined.csv`. Set `RERUN_INDICATORS = TRUE`
+to regenerate from raw data.
+
+```{r indicator-taxa}
+run_indicator_analysis <- function(dataset_name, its_data) {
+  temp <- its_data %>%
+    rename(taxon = genus) %>%
+    filter(guild %in% c("Arbuscular Mycorrhizal", "Ectomycorrhizal"), !is.na(taxon)) %>%
+    mutate(guild = recode(guild,
+      `Arbuscular Mycorrhizal` = "AM",
+      `Ectomycorrhizal` = "ECM"
+    )) %>%
+    group_by(Sample_ID, Treatment, taxon, guild) %>%
+    summarise(Abundance = sum(Abundance, na.rm = TRUE), .groups = "drop") %>%
+    select(-guild) %>%
+    pivot_wider(names_from = "taxon", values_from = "Abundance", values_fill = 0) %>%
+    ungroup()
+
+  res <- try(multipatt(temp %>% select(-Sample_ID, -Treatment),
+    temp$Treatment,
+    control = how(nperm = 999)
+  ), silent = TRUE)
+  if (inherits(res, "try-error")) {
+    message("[indicator analysis] multipatt failed for ", dataset_name, ": ", conditionMessage(attr(res, "condition")))
+    return(NULL)
+  }
+
+  species_columns <- setdiff(names(temp), c("Sample_ID", "Treatment"))
+
+  out <- res[["sign"]] %>%
+    filter(p.value <= 0.05) %>%
+    rownames_to_column("taxon") %>%
+    pivot_longer(cols = starts_with("s."), names_to = "group", values_to = "value") %>%
+    filter(value == 1) %>%
+    mutate(Indicat_Treatment = recode(gsub("^s.", "", group),
+      "Rehab" = "Restoration", "REHAB" = "Restoration",
+      "REFERENCE" = "Reference", "Ref" = "Reference"
+    )) %>%
+    select(taxon, Indicat_Treatment, stat, p.value)
+
+  total_counts <- temp %>%
+    select(all_of(species_columns)) %>%
+    summarise(across(everything(), sum)) %>%
+    pivot_longer(everything(), names_to = "taxon", values_to = "Total_Read_Count")
+
+  guild_info <- its_data %>%
+    rename(taxon = genus) %>%
+    filter(!is.na(taxon)) %>%
+    mutate(guild = recode(guild,
+      `Arbuscular Mycorrhizal` = "AM",
+      `Ectomycorrhizal` = "ECM"
+    )) %>%
+    select(taxon, guild) %>%
+    distinct()
+
+  out %>%
+    left_join(total_counts, by = "taxon") %>%
+    left_join(guild_info, by = "taxon") %>%
+    mutate(Dataset = dataset_name) %>%
+    select(Dataset, guild, Indicat_Treatment, taxon, p.value)
+}
+
+if (RERUN_INDICATORS) {
+  hunter_indicators <- run_indicator_analysis("Hunter", hunter_its)
+  snowy_indicators <- run_indicator_analysis("Snowy", snowies_its)
+
+  if (!is.null(hunter_indicators) && !is.null(snowy_indicators)) {
+    combined_indicators <- bind_rows(hunter_indicators, snowy_indicators) %>%
+      arrange(Dataset, guild, Indicat_Treatment, taxon)
+    combined_indicators$p.value <- format_p_val(combined_indicators$p.value)
+
+    write.csv(combined_indicators, indicator_csv, row.names = FALSE)
+  }
+} else {
+  combined_indicators <- read.csv(indicator_csv, stringsAsFactors = FALSE) %>%
+    select(Dataset, guild, Indicat_Treatment, taxon, everything())
+}
+
+# Create and export flextable
+common_taxa <- combined_indicators %>%
+  count(taxon) %>%
+  filter(n > 1) %>%
+  pull(taxon)
+
+ft_ind <- flextable(combined_indicators) %>%
+  set_header_labels(
+    Dataset = "Dataset", guild = "Guild", Indicat_Treatment = "Indicator of", taxon = "Genus",
+    p.value = "p-value"
+  ) %>%
+  merge_v(j = ~ Dataset + guild + Indicat_Treatment) %>%
+  theme_vanilla() %>%
+  autofit() %>%
+  bold(i = ~ taxon %in% common_taxa, j = "taxon", bold = TRUE)
+
+save_as_docx(ft_ind, path = file.path(table_dir, "Table_Indicator_Taxa_Combined.docx"))
+write.csv(combined_indicators, file.path(table_dir, "Table_Indicator_Taxa_Combined.csv"),
+  row.names = FALSE
+)
+ft_ind
+```
+
+# Constrained Correspondence Analysis (CCA)
+
+NOTE: The `ordistep()` function in vegan uses random permutation tests for
+variable selection, so results are not completely reproducible across runs.
+We have therefore included the original ordistep ANOVA output,
+but note that re-running `ordistep` may yield slightly different variable sets.
+The hardcoded variable lists below are used for the subsequent HMSC analysis to ensure full reproducibility of that modelling step.
+
+## CCA data preparation
+
+```{r cca-data-prep}
+hunter_df <- hunter_dat %>% as.data.frame()
+snowies_df <- snowies_dat %>% as.data.frame()
+
+# Shared helper: prepare OTU + predictor matrices for a given dataset × treatment
+prep_cca_data <- function(dat_df, otus, preds, treat) {
+  subs <- which(dat_df$Treat == treat)
+  o <- otus[subs, ]
+  p <- preds[subs, ] %>%
+    mutate(across(where(is.character), as.factor)) %>%
+    select(where(~ sum(!is.na(.x)) >= 5)) %>%
+    select(!c(
+      matches(c("Plot_ID", "Site_ID", "geometry")),
+      contains("__"), matches("raw_relabund|obs_richness")
+    )) %>%
+    as.data.frame() %>%
+    select(where(~ !is.list(.x)))
+
+  o <- o[, colSums(o) > 0]
+
+  Y <- o[complete.cases(p), ] %>% decostand(method = "hellinger")
+  Y <- Y[, colSums(Y) > 0]
+  p_cc <- as.data.frame(p[complete.cases(p), ])
+  list(Y = Y, p_cc = p_cc)
+}
+
+fit_cca_ordistep <- function(Y, p_cc, model_path, label) {
+  # Full model
+  m1_full <- cca(Y ~ ., data = p_cc)
+
+  # Sequentially exclude variables with VIF > 10
+  # vif_vals <- vif.cca(m1_full)
+  # while (any(vif_vals > 10, na.rm = TRUE) || any(is.na(vif_vals))) {
+  #   drop_var <- names(which.max(replace(vif_vals, is.na(vif_vals), Inf)))
+  #   parent_var <- colnames(p_cc)[sapply(colnames(p_cc), function(v) startsWith(drop_var, v))]
+  #   drop_col <- if (length(parent_var) > 0) parent_var[which.max(nchar(parent_var))] else drop_var
+  #   message(sprintf("  [%s] Excluding '%s'  (VIF = %.1f)", label, drop_col, vif_vals[drop_var]))
+  #   p_cc    <- p_cc[, setdiff(colnames(p_cc), drop_col), drop = FALSE]
+  #   m1_full <- cca(Y ~ ., data = p_cc)
+  #   vif_vals <- vif.cca(m1_full)
+  # }
+
+  # Bidirectional stepwise selection
+  m0_full <- cca(Y ~ 1, data = p_cc)
+  env_save <- new.env()
+  env_save$m1.ord <- ordistep(m0_full,
+    scope = formula(m1_full),
+    direction = "both", permutations = how(nperm = 999), trace = FALSE
+  )
+  save(list = "m1.ord", file = model_path, envir = env_save)
+
+  # Print ANOVA
+  cat(sprintf(label))
+  print(env_save$m1.ord$anova)
+
+  invisible(env_save$m1.ord)
+}
+
+## CCA model fitting
+# Each block below fits **one** dataset × treatment combination.
+# Guarded by RERUN_CCA — set TRUE in global-options to re-run ordistep.
+
+if (RERUN_CCA) {
+  ### Hunter Mining — Reference
+  d <- prep_cca_data(hunter_df, hunter_otus, hunter_preds, "Reference")
+  fit_cca_ordistep(d$Y, d$p_cc,
+    model_path = file.path(models_dir, "hunter/cca/ordistep_reference.RData"),
+    label = "Hunter Reference"
+  )
+  cat("Hunter Reference predictor columns:\n")
+  print(colnames(d$p_cc))
+
+  ### Snowy Hydro — Reference
+  d <- prep_cca_data(snowies_df, snowies_otus, snowies_preds, "Reference")
+  fit_cca_ordistep(d$Y, d$p_cc,
+    model_path = file.path(models_dir, "snowies/cca/ordistep_reference.RData"),
+    label = "Snowy Reference"
+  )
+  cat("Snowy Reference predictor columns:\n")
+  print(colnames(d$p_cc))
+
+  ### Hunter Mining — Restoration
+  d <- prep_cca_data(hunter_df, hunter_otus, hunter_preds, "Rehab")
+  fit_cca_ordistep(d$Y, d$p_cc,
+    model_path = file.path(models_dir, "hunter/cca/ordistep_rehab.RData"),
+    label = "Hunter Restoration"
+  )
+  cat("Hunter Restoration predictor columns:\n")
+  print(colnames(d$p_cc))
+
+  ### Snowy Hydro — Restoration
+  d <- prep_cca_data(snowies_df, snowies_otus, snowies_preds, "Rehab")
+  fit_cca_ordistep(d$Y, d$p_cc,
+    model_path = file.path(models_dir, "snowies/cca/ordistep_rehab.RData"),
+    label = "Snowy Restoration"
+  )
+  cat("Snowy Restoration predictor columns:\n")
+  print(colnames(d$p_cc))
+} else {
+  message("CCA ordistep skipped (RERUN_CCA = FALSE). Using pre-fitted .RData files.")
+}
+
+# ── Print saved ordistep ANOVA tables for reference ──────────────────────────
+cca_model_specs <- list(
+  list(
+    path = file.path(models_dir, "hunter/cca/ordistep_reference.RData"),
+    label = "Hunter Mining — Reference"
+  ),
+  list(
+    path = file.path(models_dir, "snowies/cca/ordistep_reference.RData"),
+    label = "Snowy Hydro — Reference"
+  ),
+  list(
+    path = file.path(models_dir, "hunter/cca/ordistep_rehab.RData"),
+    label = "Hunter Mining — Restoration"
+  ),
+  list(
+    path = file.path(models_dir, "snowies/cca/ordistep_rehab.RData"),
+    label = "Snowy Hydro — Restoration"
+  )
+)
+
+for (spec in cca_model_specs) {
+  env_loaded <- new.env()
+  load(spec$path, envir = env_loaded)
+  cat(sprintf("\n===== ANOVA: %s =====\n", spec$label))
+  print(env_loaded$m1.ord$anova)
+}
+
+# ── Hardcoded ordistep-selected variables for HMSC ───────────────────────────
+# These are the significant variables (p <= 0.05) retained by ordistep in the
+# original run. They are hardcoded here so that the downstream HMSC models use
+# a fixed, reviewable predictor set independent of ordistep stochasticity.
+
+ordistep_selected_vars <- list(
+  hunter_reference = c(
+    "pH", "PCT_Name", "P_mg_Kg", "Stability_ind",
+    "Fol_cov_shrub", "MIR_ROC", "MIR_TN", "plfa_amf",
+    "EC_microS_cm", "Nutrient_ind", "Fungi_Bact"
+  ),
+  hunter_restoration = c(
+    "Establishment", "MIR_POC", "Fol_cov_tree", "pH",
+    "PCT_Name", "BAM_Litter", "LAP", "Exotic_Cover",
+    "Shrub_cov", "Tree_cov"
+  ),
+  snowy_reference = c(
+    "Exotic_Cover", "Fire_Severity_2003", "Rock",
+    "Dominant_Euc", "Logs", "ANPP", "pH"
+  ),
+  snowy_restoration = c(
+    "pH", "Leaf_N_P", "Establishment", "Tree_cov",
+    "Exotic_Cover", "GG_cov", "Rock", "CV_DBH",
+    "mean_live_DBH", "Logs", "Leaf_Mn", "Acac_ha",
+    "dist_Tree"
+  )
+)
+
+cat("\n── Hardcoded ordistep variable selections ──\n")
+for (nm in names(ordistep_selected_vars)) {
+  cat(sprintf("  %s: %s\n", nm, paste(ordistep_selected_vars[[nm]], collapse = ", ")))
+}
+```
+
+## CCA publication plots
+
+Build the four-panel CCA biplot figure from the saved ordistep models.
+
+```{r cca-plots, fig.width=14, fig.height=14}
+build_cca_plot <- function(dat_df, model_path, tag_label, title) {
+  env_loaded <- new.env()
+  load(model_path, envir = env_loaded)
+  ord <- env_loaded$m1.ord
+
+  # Eigenvalue % explained
+  eig <- c(ord$CCA$eig, ord$CA$eig)
+  eig_pct <- 100 * eig / sum(eig)
+
+  # Site scores
+  site_sc <- as.data.frame(scores(ord, display = "sites", choices = 1:2))
+  site_sc$Sample <- rownames(site_sc)
+  site_sc$Treat <- dat_df$Treat[match(site_sc$Sample, dat_df$Sample_ID)]
+
+  # Biplot scores
+  bp_sc <- as.data.frame(ord$CCA$biplot[, 1:2, drop = FALSE])
+  bp_sc$var <- rownames(bp_sc)
+  bp_sc$label <- ifelse(bp_sc$var %in% names(var_rename_map),
+    var_rename_map[bp_sc$var], bp_sc$var
+  )
+
+  scale_f <- max(abs(site_sc[, 1:2])) * 0.6 / max(abs(bp_sc[, 1:2]))
+  bp_sc[, 1:2] <- bp_sc[, 1:2] * scale_f
+
+  ggplot() +
+    geom_point(
+      data = site_sc, aes(x = CCA1, y = CCA2, colour = Treat),
+      size = 3, alpha = 0.7
+    ) +
+    geom_segment(
+      data = bp_sc, aes(x = 0, y = 0, xend = CCA1, yend = CCA2),
+      arrow = arrow(length = unit(0.2, "cm")),
+      colour = "black", alpha = 0.6, linewidth = 0.6
+    ) +
+    geom_text(
+      data = bp_sc, aes(x = CCA1, y = CCA2, label = label),
+      size = 3.5, fontface = "bold", vjust = -0.5
+    ) +
+    scale_colour_manual(
+      values = color_scheme,
+      name = if (title %in% c("Hunter Mining — Restoration", "Snowy Hydro — Restoration")) NULL else "Treatment",
+      labels = c("Reference" = "Reference", "Rehab" = "Restoration")
+    ) +
+    labs(
+      x = paste0("CCA1 (", round(eig_pct[1], 1), "%)"),
+      y = paste0("CCA2 (", round(eig_pct[2], 1), "%)"),
+      title = title, tag = tag_label
+    ) +
+    pub_theme +
+    theme(plot.tag = element_text(size = 16, face = "bold"), aspect.ratio = 1)
+}
+
+cca_plots <- list(
+  build_cca_plot(
+    hunter_df,
+    file.path(models_dir, "hunter/cca/ordistep_reference.RData"),
+    "a)", "Hunter Mining — Reference"
+  ),
+  build_cca_plot(
+    snowies_df,
+    file.path(models_dir, "snowies/cca/ordistep_reference.RData"),
+    "b)", "Snowy Hydro — Reference"
+  ),
+  build_cca_plot(
+    hunter_df,
+    file.path(models_dir, "hunter/cca/ordistep_rehab.RData"),
+    "c)", "Hunter Mining — Restoration"
+  ),
+  build_cca_plot(
+    snowies_df,
+    file.path(models_dir, "snowies/cca/ordistep_rehab.RData"),
+    "d)", "Snowy Hydro — Restoration"
+  )
+)
+
+cca_plots <- Filter(Negate(is.null), cca_plots)
+if (length(cca_plots) > 0) {
+  cca_composite <- wrap_plots(cca_plots, ncol = 2) +
+    plot_layout(guides = "collect") & theme(legend.position = "bottom")
+
+  ggsave(file.path(plot_dir, "publication_cca_combined.png"),
+    plot = cca_composite, width = 14, height = 14, dpi = 300, bg = "white"
+  )
+  print(cca_composite)
+}
+```
+# HMSC Model Fitting (Optional — Reproducibility)
+
+The HMSC models are computationally intensive and were originally fit on a
+remote server. Pre-fitted model objects are loaded from the `models/` directory
+throughout this document. To regenerate any model from scratch, uncomment the
+corresponding `source()` call below. Each script preps the data, fits both PA
+and abundance models via MCMC, evaluates convergence, and saves outputs to the
+paths expected by this document.
+
+**Note:** Running these scripts will take several hours per model.
+
+```{r hmsc-run-models, eval=FALSE}
+# ── Uncomment to re-fit individual HMSC models ────────────────────────────────
+# Each script preps data, fits PA + abundance models, computes convergence
+# diagnostics, and saves outputs to models/<study>/<treatment>/
+
+# Hunter Mining — Reference sites
+source(file.path(proj_root, "R_scripts/hmsc/dataPrep_hmsc_hunter_reference.R"))
+
+# Hunter Mining — Rehab (Restoration) sites
+source(file.path(proj_root, "R_scripts/hmsc/dataPrep_hmsc_hunter_rehab.R"))
+
+# Snowy Hydro — Reference sites
+source(file.path(proj_root, "R_scripts/hmsc/dataPrep_hmsc_snowies_reference.R"))
+
+# Snowy Hydro — Rehab (Restoration) sites
+source(file.path(proj_root, "R_scripts/hmsc/dataPrep_hmsc_snowies_rehab.R"))
+```
+
+# HMSC Model Diagnostics
+
+Diagnostic plots for HMSC presence-absence and abundance models,
+including PSRF convergence, model fit metrics, and effective sample sizes.
+
+```{r hmsc-diagnostics, fig.width=10, fig.height=10, results='hide'}
+# ── PA Diagnostic Function ────────────────────────────────────────────────────
+plot_diagnostics_PA <- function(mpost, psrf_beta, mf_expl, label) {
+  out_file <- file.path(
+    plot_dir, "hmsc_diagnostics",
+    paste0("Diagnostics_PA_", label, ".pdf")
+  )
+  pdf(out_file, width = 10, height = 10)
+  par(mfrow = c(2, 2), mar = c(5, 5, 4, 2))
+
+  try({
+    hist(psrf_beta[, 1],
+      main = paste("PSRF Beta — PA", label),
+      xlab = "PSRF", col = "steelblue", border = "white", breaks = 30
+    )
+    abline(v = 1.1, col = "red", lty = 2, lwd = 2)
+    legend("topright", legend = c(
+      paste("Mean =", round(mean(psrf_beta[, 1]), 4)),
+      paste(
+        "Range:", round(min(psrf_beta[, 1]), 4), "–",
+        round(max(psrf_beta[, 1]), 4)
+      )
+    ), bty = "n", cex = 0.9)
+  })
+
+  if (!is.null(mf_expl$TjurR2)) {
+    barplot(sort(mf_expl$TjurR2, decreasing = TRUE),
+      main = paste("Tjur R²", label), ylab = "Tjur R²",
+      col = "steelblue", border = NA, las = 2, cex.names = 0.4
+    )
+    abline(h = mean(mf_expl$TjurR2, na.rm = TRUE), col = "red", lty = 2)
+  } else {
+    plot.new()
+    text(0.5, 0.5, "Tjur R² N/A")
+  }
+
+  if (!is.null(mf_expl$AUC)) {
+    barplot(sort(mf_expl$AUC, decreasing = TRUE),
+      main = paste("AUC", label), ylab = "AUC",
+      col = "darkorange", border = NA, las = 2, cex.names = 0.4
+    )
+    abline(h = 0.5, col = "grey50", lty = 3)
+    abline(h = mean(mf_expl$AUC, na.rm = TRUE), col = "red", lty = 2)
+  } else {
+    plot.new()
+    text(0.5, 0.5, "AUC N/A")
+  }
+
+  try({
+    ess <- effectiveSize(mpost$Beta)
+    hist(ess,
+      main = paste("ESS Beta", label), xlab = "ESS",
+      col = "mediumpurple", border = "white", breaks = 30
+    )
+    legend("topright",
+      legend = paste("Median =", round(median(ess), 1)),
+      bty = "n", cex = 0.9
+    )
+  })
+
+  dev.off()
+}
+
+# ── Abundance Diagnostic Function ────────────────────────────────────────────
+plot_diagnostics_AB <- function(mpost, psrf_beta, mf_expl, mf_pred, label) {
+  out_file <- file.path(
+    plot_dir, "hmsc_diagnostics",
+    paste0("Diagnostics_Abundance_", label, ".pdf")
+  )
+  pdf(out_file, width = 10, height = 10)
+  par(mfrow = c(2, 2), mar = c(5, 5, 4, 2))
+
+  try({
+    hist(psrf_beta[, 1],
+      main = paste("PSRF Beta — Abundance", label),
+      xlab = "PSRF", col = "steelblue", border = "white", breaks = 30
+    )
+    abline(v = 1.1, col = "red", lty = 2, lwd = 2)
+  })
+
+  if (!is.null(mf_expl$R2)) {
+    if (!is.null(mf_pred) && !is.null(mf_pred$R2)) {
+      plot(mf_expl$R2, mf_pred$R2,
+        xlim = c(-0.1, 1), ylim = c(-0.1, 1),
+        xlab = "Explanatory R²", ylab = "Predictive R²",
+        main = paste("R²", label), pch = 21, bg = "forestgreen"
+      )
+      abline(0, 1, col = "red", lty = 2)
+    } else {
+      barplot(sort(mf_expl$R2, decreasing = TRUE),
+        main = paste("R² (expl)", label), col = "forestgreen", border = NA
+      )
+    }
+  } else {
+    plot.new()
+    text(0.5, 0.5, "R² N/A")
+  }
+
+  if (!is.null(mf_expl$RMSE)) {
+    if (!is.null(mf_pred) && !is.null(mf_pred$RMSE)) {
+      rng <- range(c(mf_expl$RMSE, mf_pred$RMSE), na.rm = TRUE)
+      plot(mf_expl$RMSE, mf_pred$RMSE,
+        xlim = rng, ylim = rng,
+        xlab = "Explanatory RMSE", ylab = "Predictive RMSE",
+        main = paste("RMSE", label), pch = 21, bg = "grey50"
+      )
+      abline(0, 1, col = "red", lty = 2)
+    }
+  } else {
+    plot.new()
+    text(0.5, 0.5, "RMSE N/A")
+  }
+
+  try({
+    ess <- effectiveSize(mpost$Beta)
+    hist(ess,
+      main = paste("ESS Beta", label), xlab = "ESS",
+      col = "mediumpurple", border = "white", breaks = 30
+    )
+  })
+
+  dev.off()
+}
+
+# ── Run diagnostics for all 4 model sets ─────────────────────────────────────
+diag_specs <- list(
+  list(path = "snowies/hmsc_reference/mcmc_convergence.RData", label = "Snowy_Reference"),
+  list(path = "snowies/hmsc_rehab/mcmc_convergence.RData", label = "Snowy_Rehab"),
+  list(path = "hunter/hmsc_reference/mcmc_convergence.RData", label = "Hunter_Reference"),
+  list(path = "hunter/hmsc_rehab/mcmc_convergence.RData", label = "Hunter_Rehab")
+)
+
+for (spec in diag_specs) {
+  env <- new.env()
+  load(file.path(models_dir, spec$path), envir = env)
+  plot_diagnostics_PA(env$mpost1, env$psrf.beta1, env$MF1, spec$label)
+  plot_diagnostics_AB(env$mpost2, env$psrf.beta2, env$MF2, env$MF_pred, spec$label)
+}
+
+cat("All HMSC diagnostic plots saved to output/plots/hmsc_diagnostics/\n")
+```
+
+# HMSC Model Evaluation Table
+
+Summary table of model fit metrics (AUC, Tjur R², R², RMSE) and MCMC
+convergence diagnostics across all model × treatment combinations.
+
+```{r hmsc-eval-table}
+get_vp <- function(hM) {
+  vp <- computeVariancePartitioning(hM)
+  rowMeans(vp$vals, na.rm = TRUE)
+}
+
+get_model_fit <- function(hM) {
+  predY <- computePredictedValues(hM)
+  mf <- evaluateModelFit(hM, predY = predY)
+  tibble(
+    AUC = if (!is.null(mf$AUC)) mean(mf$AUC, na.rm = TRUE) else NA_real_,
+    TjurR2 = if (!is.null(mf$TjurR2)) mean(mf$TjurR2, na.rm = TRUE) else NA_real_,
+    Mean_R2 = if (!is.null(mf$R2)) mean(mf$R2, na.rm = TRUE) else NA_real_,
+    RMSE = if (!is.null(mf$RMSE)) mean(mf$RMSE, na.rm = TRUE) else NA_real_
+  )
+}
+
+get_psrf <- function(hM) {
+  mpost <- convertToCodaObject(hM)
+  psrf_beta <- gelman.diag(mpost$Beta, multivariate = FALSE)$psrf
+  list(
+    mean = sprintf("%.4f", mean(psrf_beta[, 1])),
+    range = sprintf("%.4f–%.4f", min(psrf_beta[, 1]), max(psrf_beta[, 1]))
+  )
+}
+
+build_eval_table <- function(models, label) {
+  fit_PA <- get_model_fit(models[[1]])
+  fit_AB <- get_model_fit(models[[2]])
+  psrf_PA <- get_psrf(models[[1]])
+  psrf_AB <- get_psrf(models[[2]])
+
+  tibble(
+    Metric = c("AUC", "Tjur R²", "Mean R²", "RMSE", "Mean PSRF (β)", "PSRF range (β)"),
+    PA = c(
+      round(fit_PA$AUC, 3), round(fit_PA$TjurR2, 3), "--", "--",
+      psrf_PA$mean, psrf_PA$range
+    ),
+    AB = c(
+      "--", "--", round(fit_AB$Mean_R2, 3), round(fit_AB$RMSE, 3),
+      psrf_AB$mean, psrf_AB$range
+    )
+  ) %>% setNames(c("Metric", paste0(label, "_PA"), paste0(label, "_Abundance")))
+}
+
+# Load models and build tables
+eval_specs <- list(
+  list(path = "hunter/hmsc_reference/mcmc_output.RData", label = "Hunter_Ref"),
+  list(path = "hunter/hmsc_rehab/mcmc_output.RData", label = "Hunter_Rehab"),
+  list(path = "snowies/hmsc_reference/mcmc_output.RData", label = "Snowy_Ref"),
+  list(path = "snowies/hmsc_rehab/mcmc_output.RData", label = "Snowy_Rehab")
+)
+
+eval_tables <- list()
+for (spec in eval_specs) {
+  env <- new.env()
+  load(file.path(models_dir, spec$path), envir = env)
+  eval_tables[[spec$label]] <- build_eval_table(env$models, spec$label)
+}
+
+# Combine into one table
+combined_eval <- eval_tables[[1]]
+for (i in 2:length(eval_tables)) {
+  combined_eval <- full_join(combined_eval, eval_tables[[i]], by = "Metric")
+}
+combined_eval[is.na(combined_eval)] <- "--"
+
+# Build flextable
+ft_eval <- flextable(combined_eval) %>%
+  set_header_df(mapping = tibble(
+    col_keys = colnames(combined_eval),
+    line1 = c("", rep("Hunter Mining", 4), rep("Snowy Hydro", 4)),
+    line2 = c(
+      "", rep("Reference", 2), rep("Restoration", 2),
+      rep("Reference", 2), rep("Restoration", 2)
+    ),
+    line3 = c("Metric", rep(c("PA", "Abundance"), 4))
+  )) %>%
+  theme_booktabs() %>%
+  merge_h(part = "header") %>%
+  merge_v(part = "header") %>%
+  align(align = "center", part = "header") %>%
+  align(j = 1, align = "left", part = "all") %>%
+  bold(part = "header") %>%
+  autofit()
+
+doc_eval <- read_docx() %>%
+  body_add_par("HMSC Model Evaluation Summary", style = "heading 1") %>%
+  body_add_flextable(ft_eval)
+print(doc_eval, target = file.path(table_dir, "Table_HMSC_Model_Evaluation.docx"))
+
+ft_eval
+```
+
+# HMSC Chord Diagrams
+
+Chord diagrams showing significant co-occurrence associations between
+mycorrhizal fungal taxa from HMSC models.
+
+```{r hmsc-chord, fig.width=10, fig.height=10, results='hide'}
+# ── Helper functions ──────────────────────────────────────────────────────────
+tidymat <- function(x) {
+  rownames(x) <- gsub("[A-Z]+\\_\\_", "", rownames(x))
+  colnames(x) <- gsub("[A-Z]+\\_\\_", "", colnames(x))
+  x
+}
+
+compute_associations <- function(models, model_idx, dataset = c("snowy", "hunter")) {
+  dataset <- match.arg(dataset)
+  m <- models[[model_idx]]
+  OmegaCor <- computeAssociations(m, start = 1)
+  rl_names <- names(m$ranLevels)
+  target_level <- if (dataset == "snowy") "Subplot" else "Plot_ID"
+  ranlev <- which(rl_names == target_level)[1]
+  supportLevel <- 0.6
+  ((OmegaCor[[ranlev]]$support > supportLevel) +
+    (OmegaCor[[ranlev]]$support < (1 - supportLevel)) > 0) * OmegaCor[[ranlev]]$mean
+}
+
+draw_chord <- function(toPlot, title_text, targets, label = NULL) {
+  adjm <- toPlot
+  diag(adjm) <- 0
+  all_taxa <- rownames(toPlot)
+  keep <- unique(unlist(lapply(targets, function(t) grep(t, all_taxa, value = TRUE))))
+  if (length(keep) == 0 || !any(adjm[keep, , drop = FALSE] != 0)) {
+    plot.new()
+    mtext(title_text, side = 3, line = 0.5, cex = 0.9, font = 2)
+    text(0.5, 0.5, "(No significant associations)")
+    return(invisible(NULL))
+  }
+  adjm <- adjm[keep, , drop = FALSE]
+  other <- colnames(adjm)[!colnames(adjm) %in% keep]
+  cols <- c(
+    rep("#5f0854", length(keep)),
+    ifelse(grepl("ECM__", other), "#a06f99", "#b68317")
+  )
+  names(cols) <- c(keep, other)
+  names(cols) <- gsub("[A-Z]+\\_\\_", "", names(cols))
+  adjm <- tidymat(adjm)
+  cols <- cols[names(cols) %in% c(rownames(adjm), colnames(adjm))]
+  circos.par(canvas.xlim = c(-1.0, 1.0), canvas.ylim = c(-1.0, 1.0))
+  chordDiagram(adjm,
+    col = function(x) ifelse(x < 0, "red", "blue"),
+    grid.col = cols, annotationTrack = "grid",
+    preAllocateTracks = list(track.height = max(strwidth(unlist(dimnames(adjm)))) * 0.6)
+  )
+  mtext(title_text, side = 3, line = 1.5, cex = 0.9, font = 2)
+  if (!is.null(label)) mtext(label, side = 3, adj = 0, line = 1.5, cex = 0.9, font = 2)
+  circos.track(track.index = 1, track.margin = c(0.06, 0), panel.fun = function(x, y) {
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1], CELL_META$sector.index,
+      facing = "clockwise", niceFacing = TRUE, adj = c(0, .2), cex = .65
+    )
+  }, bg.border = NA)
+
+  circos.clear()
+}
+
+draw_chord_am_only <- function(toPlot, title_text, targets, label = NULL) {
+  adjm <- toPlot
+  diag(adjm) <- 0
+  keep <- unique(unlist(lapply(targets, function(t) grep(t, rownames(toPlot), value = TRUE))))
+  am_cols <- grep("^AM__", colnames(adjm), value = TRUE)
+  if (length(keep) == 0 || length(am_cols) == 0 || !any(adjm[keep, am_cols, drop = FALSE] != 0)) {
+    plot.new()
+    mtext(title_text, side = 3, line = 0.5, cex = 0.9, font = 2)
+    text(0.5, 0.5, "(No significant EcM-AM associations)")
+    return(invisible(NULL))
+  }
+  adjm <- adjm[keep, am_cols, drop = FALSE]
+  row_clean <- gsub("[A-Z]+\\_\\_", "", rownames(adjm))
+  col_clean <- gsub("[A-Z]+\\_\\_", "", colnames(adjm))
+  cols <- c(
+    setNames(rep("#5f0854", length(row_clean)), row_clean),
+    setNames(rep("#b68317", length(col_clean)), col_clean)
+  )
+  rownames(adjm) <- row_clean
+  colnames(adjm) <- col_clean
+  cols <- cols[unique(names(cols))]
+  circos.par(canvas.xlim = c(-1.0, 1.0), canvas.ylim = c(-1.0, 1.0))
+  chordDiagram(adjm,
+    col = function(x) ifelse(x < 0, "red", "blue"),
+    grid.col = cols, annotationTrack = "grid",
+    preAllocateTracks = list(track.height = max(strwidth(unlist(dimnames(adjm)))) * 0.6)
+  )
+  mtext(title_text, side = 3, line = 1.5, cex = 0.9, font = 2)
+  if (!is.null(label)) mtext(label, side = 3, adj = 0, line = 1.5, cex = 0.9, font = 2)
+  circos.track(track.index = 1, track.margin = c(0.06, 0), panel.fun = function(x, y) {
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1], CELL_META$sector.index,
+      facing = "clockwise", niceFacing = TRUE, adj = c(0, .2), cex = .65
+    )
+  }, bg.border = NA)
+  circos.clear()
+}
+
+has_significant_am <- function(toPlot, targets) {
+  adjm <- toPlot
+  diag(adjm) <- 0
+  keep <- unique(unlist(lapply(targets, function(t) grep(t, rownames(toPlot), value = TRUE))))
+  am_cols <- grep("^AM__", colnames(adjm), value = TRUE)
+  if (length(keep) == 0 || length(am_cols) == 0) {
+    return(FALSE)
+  }
+  any(adjm[keep, am_cols, drop = FALSE] != 0)
+}
+
+has_significant_chord <- function(toPlot, targets) {
+  adjm <- toPlot
+  diag(adjm) <- 0
+  keep <- unique(unlist(lapply(targets, function(t) grep(t, rownames(toPlot), value = TRUE))))
+  if (length(keep) == 0) {
+    return(FALSE)
+  }
+  any(adjm[keep, , drop = FALSE] != 0)
+}
+
+# ── Load indicator taxa for shared targets ────────────────────────────────────
+indicator_df <- read.csv(indicator_csv, stringsAsFactors = FALSE)
+indicator_df$Indicat_Treatment_Norm <- toupper(indicator_df$Indicat_Treatment)
+indicator_df$Indicat_Treatment_Norm[indicator_df$Indicat_Treatment_Norm == "REF"] <- "REFERENCE"
+
+shared_ref_targets <- intersect(
+  indicator_df %>% filter(Dataset == "Hunter", Indicat_Treatment_Norm == "REFERENCE") %>%
+    pull(taxon) %>% unique(),
+  indicator_df %>% filter(Dataset == "Snowy", Indicat_Treatment_Norm == "REFERENCE") %>%
+    pull(taxon) %>% unique()
+)
+
+# ── Compute associations ─────────────────────────────────────────────────────
+assoc_specs <- list(
+  list(path = "snowies/hmsc_reference/mcmc_output.RData", ds = "snowy", label = "snowy_ref"),
+  list(path = "snowies/hmsc_rehab/mcmc_output.RData", ds = "snowy", label = "snowy_rehab"),
+  list(path = "hunter/hmsc_reference/mcmc_output.RData", ds = "hunter", label = "hunter_ref"),
+  list(path = "hunter/hmsc_rehab/mcmc_output.RData", ds = "hunter", label = "hunter_rehab")
+)
+
+assoc <- list()
+for (spec in assoc_specs) {
+  env <- new.env()
+  load(file.path(models_dir, spec$path), envir = env)
+  assoc[[paste0(spec$label, "_pa")]] <- compute_associations(env$models, 1, spec$ds)
+  assoc[[paste0(spec$label, "_ab")]] <- compute_associations(env$models, 2, spec$ds)
+}
+
+# ── Draw combined chord figure ────────────────────────────────────────────────
+chord_pairs <- list(
+  list(
+    hunter = list(data = assoc$hunter_ref_pa, title = "Hunter — Ref (PA)"),
+    snowy = list(data = assoc$snowy_ref_pa, title = "Snowy — Ref (PA)")
+  ),
+  list(
+    hunter = list(data = assoc$hunter_ref_ab, title = "Hunter — Ref (Abund)"),
+    snowy = list(data = assoc$snowy_ref_ab, title = "Snowy — Ref (Abund)")
+  ),
+  list(
+    hunter = list(data = assoc$hunter_rehab_pa, title = "Hunter — Restoration (PA)"),
+    snowy = list(data = assoc$snowy_rehab_pa, title = "Snowy — Restoration (PA)")
+  ),
+  list(
+    hunter = list(data = assoc$hunter_rehab_ab, title = "Hunter — Restoration (Abund)"),
+    snowy = list(data = assoc$snowy_rehab_ab, title = "Snowy — Restoration (Abund)")
+  )
+)
+
+# Keep only pairs where at least one dataset has ANY significant association
+# (positive or negative, across all fungal guilds — not restricted to EcM-AM).
+valid_pairs <- Filter(function(pr) {
+  has_significant_chord(pr$hunter$data, shared_ref_targets) ||
+    has_significant_chord(pr$snowy$data, shared_ref_targets)
+}, chord_pairs)
+
+if (length(valid_pairs) > 0) {
+  output_chord <- file.path(plot_dir, "hmsc_chord_combined.pdf")
+  fig_h <- length(valid_pairs) * 3.5
+  pdf(output_chord, width = 10, height = fig_h)
+  par(mfrow = c(length(valid_pairs), 2), mar = c(1, 1, 2, 1), oma = c(1, 0, 1, 0))
+  idx <- 1
+  for (pr in valid_pairs) {
+    # Draw all significant associations for each site (Hunter then Snowy)
+    draw_chord(
+      pr$hunter$data, pr$hunter$title, shared_ref_targets,
+      paste0(letters[idx], ")")
+    )
+    idx <- idx + 1
+    draw_chord(
+      pr$snowy$data, pr$snowy$title, shared_ref_targets,
+      paste0(letters[idx], ")")
+    )
+    idx <- idx + 1
+  }
+  invisible(dev.off())
+}
+
+# ── Save to file (AM-only associations) ──────────────────────────────────────
+output_chord_rehab <- file.path(plot_dir, "hmsc_chord_rehab_pa.png")
+png(output_chord_rehab, width = 10, height = 5, units = "in", res = 300)
+par(mfrow = c(1, 2), mar = c(1, 1, 3, 1), oma = c(0, 0, 0, 0))
+# Save Restoration (PA) chord diagrams showing only significant AM fungal associations
+for (info in list(
+  list(data = assoc$hunter_rehab_pa, title = "Hunter Mining — Restoration (PA)", label = "a)"),
+  list(data = assoc$snowy_rehab_pa, title = "Snowy Hydro — Restoration (PA)", label = "b)")
+)) {
+  draw_chord_am_only(info$data, info$title, shared_ref_targets, info$label)
+}
+invisible(dev.off())
+
+# ── Inline display ────────────────────────────────────────────────────────────
+par(mfrow = c(1, 2), mar = c(1, 1, 3, 1), oma = c(0, 0, 0, 0))
+# Inline display: Restoration (PA) chord diagrams with only significant AM fungal associations
+for (info in list(
+  list(data = assoc$hunter_rehab_pa, title = "Hunter Mining — Restoration (PA)", label = "a)"),
+  list(data = assoc$snowy_rehab_pa, title = "Snowy Hydro — Restoration (PA)", label = "b)")
+)) {
+  draw_chord_am_only(info$data, info$title, shared_ref_targets, info$label)
+}
+par(mfrow = c(1, 1))
+```
+
+# HMSC Interactive Chord Diagrams
+
+Interactive HTML chord diagrams showing positive and negative fungal co-occurrence
+associations side-by-side, separated by sign. Blue chords = positive; Red chords = negative.
+Dark nodes = focal EcM indicator taxa; Medium = other EcM; Light = AM fungi.
+
+```{r hmsc-chord-interactive, results='asis'}
+# ── Packages needed for interactive output ────────────────────────────────────
+# remotes::install_github("mattflor/chorddiag")   # if not on CRAN
+if (!requireNamespace("chorddiag", quietly = TRUE) ||
+  !requireNamespace("htmlwidgets", quietly = TRUE) ||
+  !requireNamespace("base64enc", quietly = TRUE)) {
+  knitr::knit_exit()
+}
+
+output_dir <- plot_dir # maps to output/plots/
+
+# ── Helper: filter association matrix to keep only positive or negative values ─
+filter_by_sign <- function(mat, sign_type) {
+  filtered <- mat
+  if (sign_type == "positive") {
+    filtered[filtered < 0] <- 0
+  } else if (sign_type == "negative") {
+    filtered[filtered > 0] <- 0
+  }
+  return(filtered)
+}
+
+# ── Build one chorddiag widget ─────────────────────────────────────────────────
+create_interactive_chord <- function(toPlot, targets, sign_type = "all") {
+  adjm <- toPlot
+  diag(adjm) <- 0
+
+  adjm <- filter_by_sign(adjm, sign_type)
+
+  all_taxa <- rownames(toPlot)
+  keep <- unique(unlist(lapply(targets, function(t) grep(t, all_taxa, value = TRUE))))
+  if (length(keep) == 0) {
+    return(NULL)
+  }
+
+  adjm <- adjm[keep, , drop = FALSE]
+  if (!any(adjm != 0)) {
+    return(NULL)
+  }
+
+  adjm <- adjm[, colSums(abs(adjm)) > 0, drop = FALSE]
+
+  if (sign_type == "positive") {
+    ecm_dark <- "#041331"
+    ecm_light <- "#2a5090"
+    am_col <- "#c7e0f7"
+  } else if (sign_type == "negative") {
+    ecm_dark <- "#4e0909"
+    ecm_light <- "#9a2020"
+    am_col <- "#f3d5d5"
+  } else {
+    ecm_dark <- "#5f0854"
+    ecm_light <- "#a06f99"
+    am_col <- "#b68317"
+  }
+
+  other <- colnames(adjm)[!colnames(adjm) %in% keep]
+  row_cols <- setNames(rep(ecm_dark, length(keep)), keep)
+  col_cols <- setNames(ifelse(grepl("ECM__", other), ecm_light, am_col), other)
+  color_map <- c(row_cols, col_cols)
+
+  names(color_map) <- gsub("[A-Z]+\\_\\_", "", names(color_map))
+  color_map <- color_map[!duplicated(names(color_map))]
+
+  adjm <- tidymat(adjm)
+
+  all_names <- unique(c(rownames(adjm), colnames(adjm)))
+  square_adjm <- matrix(0,
+    nrow = length(all_names), ncol = length(all_names),
+    dimnames = list(all_names, all_names)
+  )
+  square_adjm[rownames(adjm), colnames(adjm)] <- adjm
+
+  display_adjm <- abs(square_adjm)
+  display_adjm <- pmax(display_adjm, t(display_adjm))
+
+  has_links <- (rowSums(display_adjm) + colSums(display_adjm)) > 0
+  display_adjm <- display_adjm[has_links, has_links, drop = FALSE]
+  all_names <- rownames(display_adjm)
+  if (length(all_names) == 0) {
+    return(NULL)
+  }
+
+  group_colors <- color_map[all_names]
+  group_colors[is.na(group_colors)] <- "#999999"
+
+  chord_col <- if (sign_type == "positive") "#3366cc" else if (sign_type == "negative") "#cc3333" else "#888888"
+
+  chorddiag::chorddiag(
+    display_adjm,
+    groupColors = unname(group_colors),
+    chordedgeColor = chord_col,
+    groupnamePadding = 30,
+    groupnameFontsize = 11,
+    showTicks = FALSE,
+    margin = 120,
+    tooltipGroupConnector = " \u2194 ",
+    tooltipUnit = "",
+    precision = 3,
+    fadeLevel = 0.3
+  )
+}
+
+# ── Build self-contained HTML page (no pandoc required) ───────────────────────
+html_output <- file.path(output_dir, "publication_hmsc_chord_interactive.html")
+
+html_parts <- c(
+  "<!DOCTYPE html>",
+  "<html><head>",
+  '<meta charset="utf-8">',
+  "<title>HMSC Chord Diagrams - Fungal Associations</title>",
+  "<style>body{max-width:1400px;margin:0 auto;padding:20px;font-family:Arial,sans-serif;}",
+  ".pair-row{display:flex;flex-wrap:wrap;gap:20px;justify-content:center;margin-bottom:30px;}",
+  ".pair-col{flex:1;min-width:400px;}",
+  "h3{margin-top:30px;} hr{margin:20px 0;}</style>",
+  "</head><body>",
+  "<h1>HMSC Chord Diagrams - Fungal Associations</h1>",
+  "<p>Each panel shows positive (blue, left) and negative (red, right) associations. ",
+  "Dark shade = EcM indicator taxa; Medium shade = Other ECM; Light shade = AM fungi.</p>"
+)
+
+# Collect widgets for inline display in the knitted HTML
+widget_list <- list()
+
+if (length(valid_pairs) > 0) {
+  label_idx2 <- 1
+  for (pr in valid_pairs) {
+    for (s in list(pr$hunter, pr$snowy)) {
+      # Use shared_ref_targets (the targets computed in the previous chunk)
+      w_pos <- create_interactive_chord(s$data, shared_ref_targets, sign_type = "positive")
+      w_neg <- create_interactive_chord(s$data, shared_ref_targets, sign_type = "negative")
+
+      if (is.null(w_pos) && is.null(w_neg)) {
+        label_idx2 <- label_idx2 + 1
+        next
+      }
+
+      # ── Accumulate for inline knit display ───────────────────────────────────
+      section_heading <- htmltools::h3(paste0(letters[label_idx2], ") ", s$title))
+      inline_row <- htmltools::div(
+        style = "display:flex;flex-wrap:wrap;gap:20px;justify-content:center;margin-bottom:30px;",
+        htmltools::div(
+          style = "flex:1;min-width:400px;",
+          htmltools::h4(
+            style = "text-align:center;color:#1a3a6b;",
+            "Positive Associations"
+          ),
+          if (!is.null(w_pos)) {
+            w_pos
+          } else {
+            htmltools::p(
+              style = "color:#999;font-style:italic;text-align:center;",
+              "(No positive associations)"
+            )
+          }
+        ),
+        htmltools::div(
+          style = "flex:1;min-width:400px;",
+          htmltools::h4(
+            style = "text-align:center;color:#8b1a1a;",
+            "Negative Associations"
+          ),
+          if (!is.null(w_neg)) {
+            w_neg
+          } else {
+            htmltools::p(
+              style = "color:#999;font-style:italic;text-align:center;",
+              "(No negative associations)"
+            )
+          }
+        )
+      )
+      widget_list <- c(widget_list, list(section_heading, inline_row, htmltools::hr()))
+
+      html_parts <- c(html_parts, paste0(
+        "<h3>", letters[label_idx2], ") ", s$title, "</h3>"
+      ))
+      html_parts <- c(html_parts, '<div class="pair-row">')
+
+      # ── Positive column ──
+      html_parts <- c(html_parts, '<div class="pair-col">')
+      html_parts <- c(html_parts, '<h4 style="text-align:center;color:#1a3a6b;">Positive Associations</h4>')
+      if (!is.null(w_pos)) {
+        pos_tmp <- tempfile(fileext = ".html")
+        htmlwidgets::saveWidget(w_pos, file = pos_tmp, selfcontained = TRUE)
+        html_parts <- c(html_parts, paste0(
+          '<iframe src="data:text/html;base64,',
+          base64enc::base64encode(charToRaw(paste(readLines(pos_tmp, warn = FALSE), collapse = "\n"))),
+          '" style="width:100%;height:520px;border:none;"></iframe>'
+        ))
+        unlink(pos_tmp)
+      } else {
+        html_parts <- c(html_parts, '<p style="color:#999;font-style:italic;text-align:center;">(No positive associations)</p>')
+      }
+      html_parts <- c(html_parts, "</div>")
+
+      # ── Negative column ──
+      html_parts <- c(html_parts, '<div class="pair-col">')
+      html_parts <- c(html_parts, '<h4 style="text-align:center;color:#8b1a1a;">Negative Associations</h4>')
+      if (!is.null(w_neg)) {
+        neg_tmp <- tempfile(fileext = ".html")
+        htmlwidgets::saveWidget(w_neg, file = neg_tmp, selfcontained = TRUE)
+        html_parts <- c(html_parts, paste0(
+          '<iframe src="data:text/html;base64,',
+          base64enc::base64encode(charToRaw(paste(readLines(neg_tmp, warn = FALSE), collapse = "\n"))),
+          '" style="width:100%;height:520px;border:none;"></iframe>'
+        ))
+        unlink(neg_tmp)
+      } else {
+        html_parts <- c(html_parts, '<p style="color:#999;font-style:italic;text-align:center;">(No negative associations)</p>')
+      }
+      html_parts <- c(html_parts, "</div>")
+
+      html_parts <- c(html_parts, "</div><hr>")
+      label_idx2 <- label_idx2 + 1
+    }
+  }
+} else {
+  cat("  No significant associations found for interactive chord diagram.\n")
+}
+
+html_parts <- c(html_parts, "</body></html>")
+
+writeLines(paste(html_parts, collapse = "\n"), con = html_output)
+
+if (file.exists(html_output)) {
+  cat("✓ Interactive HTML saved (self-contained):", html_output, "\n")
+} else {
+  cat("[ERROR] Failed to write interactive HTML to:", html_output, "\n")
+}
+
+htmltools::tagList(widget_list)
+```
+
+#Crosshair plots showing  relationship between EcM indicator genera RA and environmental variables
+
+Reference site means ± SD are shown as crosshairs, with rehabilitation site data as
+scatter points with regression lines.
+
+```{r genera-recovery, fig.width=14, fig.height=10}
+# ── Target genera from indicator taxa ─────────────────────────────────────────
+indicator_df$Indicat_Treatment_Norm <- toupper(indicator_df$Indicat_Treatment)
+indicator_df$Indicat_Treatment_Norm[indicator_df$Indicat_Treatment_Norm == "REF"] <- "REFERENCE"
+
+hunter_ecm_ref <- indicator_df %>%
+  filter(Dataset == "Hunter", guild == "ECM", Indicat_Treatment_Norm == "REFERENCE") %>%
+  pull(taxon) %>%
+  unique()
+
+snowy_ecm_ref <- indicator_df %>%
+  filter(Dataset == "Snowy", guild == "ECM", Indicat_Treatment_Norm == "REFERENCE") %>%
+  pull(taxon) %>%
+  unique()
+
+ecm_ref_indicators <- intersect(hunter_ecm_ref, snowy_ecm_ref)
+
+# Criterion: EcM genus must (1) be a significant indicator of reference sites
+# in both case studies AND (2) show a significant negative residual association
+# with AM fungi in the HMSC rehab model (posterior support > 0.60).
+extract_negative_ecm_am <- function(assoc_matrix, targets = NULL) {
+  if (is.null(assoc_matrix)) {
+    return(data.frame(EcM = character(), AM = character(), stringsAsFactors = FALSE))
+  }
+  ecm_rows <- grep("^ECM__", rownames(assoc_matrix), value = TRUE)
+  am_cols <- grep("^AM__", colnames(assoc_matrix), value = TRUE)
+  if (!is.null(targets) && length(targets) > 0) {
+    ecm_rows <- unique(unlist(lapply(targets, function(t) grep(t, ecm_rows, value = TRUE))))
+  }
+  if (length(ecm_rows) == 0 || length(am_cols) == 0) {
+    return(data.frame(EcM = character(), AM = character(), stringsAsFactors = FALSE))
+  }
+  sub_mat <- assoc_matrix[ecm_rows, am_cols, drop = FALSE]
+  neg_pairs <- which(sub_mat < 0, arr.ind = TRUE)
+  if (nrow(neg_pairs) == 0) {
+    return(data.frame(EcM = character(), AM = character(), stringsAsFactors = FALSE))
+  }
+  data.frame(
+    EcM = gsub("ECM__", "", rownames(sub_mat)[neg_pairs[, 1]]),
+    AM = gsub("AM__", "", colnames(sub_mat)[neg_pairs[, 2]]),
+    stringsAsFactors = FALSE
+  )
+}
+
+snowy_neg_pa <- extract_negative_ecm_am(assoc$snowy_rehab_pa, ecm_ref_indicators)
+snowy_neg_ab <- extract_negative_ecm_am(assoc$snowy_rehab_ab, ecm_ref_indicators)
+hunter_neg_pa <- extract_negative_ecm_am(assoc$hunter_rehab_pa, ecm_ref_indicators)
+hunter_neg_ab <- extract_negative_ecm_am(assoc$hunter_rehab_ab, ecm_ref_indicators)
+
+all_neg_pairs <- rbind(
+  if (nrow(snowy_neg_pa) > 0) cbind(snowy_neg_pa, Dataset = "Snowy", Model = "PA"),
+  if (nrow(snowy_neg_ab) > 0) cbind(snowy_neg_ab, Dataset = "Snowy", Model = "Abundance"),
+  if (nrow(hunter_neg_pa) > 0) cbind(hunter_neg_pa, Dataset = "Hunter", Model = "PA"),
+  if (nrow(hunter_neg_ab) > 0) cbind(hunter_neg_ab, Dataset = "Hunter", Model = "Abundance")
+)
+
+snowy_ecm_targets <- unique(c(snowy_neg_pa$EcM, snowy_neg_ab$EcM))
+hunter_ecm_targets <- unique(c(hunter_neg_pa$EcM, hunter_neg_ab$EcM))
+
+# ── Site recovery variable lists ──────────────────────────────────────────────
+site_vars_common <- list(
+  Tree_cov = list(
+    col = "Tree_cov",
+    label = "Native Tree Cover (%)"
+  ),
+  pH = list(
+    col = "pH",
+    label = "Soil pH"
+  ),
+  P_mg_Kg = list(
+    col = "P_mg_Kg",
+    label = "Available Phosphorus (mg/kg)"
+  )
+)
+selected_var_labels <- c(
+  "Native Tree Cover (%)",
+  "Soil pH",
+  "Available Phosphorus (mg/kg)"
+)
+
+
+get_lm_stats <- function(data, y_col, x_col) {
+  rehab_data <- data %>% filter(Treat == "Rehab")
+  y_vals <- rehab_data[[y_col]]
+  x_vals <- rehab_data[[x_col]]
+  complete <- !is.na(y_vals) & !is.na(x_vals)
+  if (sum(complete) < 5) {
+    return(list(
+      p = NA, r2 = NA, r = NA, f = NA, df1 = NA, df2 = NA,
+      n = sum(complete), sig_str = "n < 5"
+    ))
+  }
+  m <- try(lm(as.formula(paste(y_col, "~", x_col)), data = rehab_data), silent = TRUE)
+  if (inherits(m, "try-error")) {
+    return(list(
+      p = NA, r2 = NA, r = NA, f = NA, df1 = NA, df2 = NA,
+      n = nrow(rehab_data), sig_str = "Model error"
+    ))
+  }
+  s <- summary(m)
+  p_val <- tryCatch(s$coefficients[2, 4], error = function(e) NA)
+  r2 <- s$r.squared
+  fstat <- s$fstatistic
+  list(
+    p = p_val, r2 = round(r2, 3),
+    f = if (!is.null(fstat)) round(fstat[1], 2) else NA,
+    df1 = if (!is.null(fstat)) fstat[2] else NA,
+    df2 = if (!is.null(fstat)) fstat[3] else NA,
+    n = sum(complete),
+    sig_str = paste0(
+      "R\u00B2 = ", round(r2, 2), ", p = ",
+      formatC(p_val, format = "g", digits = 2)
+    )
+  )
+}
+
+make_crosshair_plot <- function(data, genus_name, genus_col, x_col, x_label,
+                                guild_prefix = "ECM", colour = "forestgreen",
+                                add_lm = TRUE) {
+  y_col <- paste0(".y_relabund_", genus_name)
+  data <- data %>% mutate(!!y_col := log10((!!sym(genus_col) + 0.5) / reads.fungi))
+  ref_s <- data %>%
+    filter(Treat == "Reference") %>%
+    summarise(
+      y_mn = mean(!!sym(y_col), na.rm = TRUE),
+      y_sd = sd(!!sym(y_col), na.rm = TRUE),
+      x_mn = mean(!!sym(x_col), na.rm = TRUE),
+      x_sd = sd(!!sym(x_col), na.rm = TRUE)
+    )
+  if (is.na(ref_s$y_mn) || is.na(ref_s$x_mn)) {
+    return(NULL)
+  }
+  rehab <- data %>% filter(Treat == "Rehab")
+  if (nrow(rehab) < 3) {
+    return(NULL)
+  }
+  p <- ggplot(rehab, aes(x = !!sym(x_col), y = !!sym(y_col))) +
+    geom_point(colour = colour, alpha = 0.6, size = 2)
+  if (add_lm) {
+    p <- p + geom_smooth(
+      method = "lm", colour = colour,
+      fill = alpha(colour, 0.3), linewidth = 0.8, se = TRUE
+    )
+  }
+  p + geom_pointrange(
+    data = ref_s,
+    aes(x = x_mn, y = y_mn, xmin = x_mn - x_sd, xmax = x_mn + x_sd),
+    inherit.aes = FALSE, colour = "forestgreen", linewidth = 1.2, size = 1.2
+  ) +
+    geom_pointrange(
+      data = ref_s,
+      aes(x = x_mn, y = y_mn, ymin = y_mn - y_sd, ymax = y_mn + y_sd),
+      inherit.aes = FALSE, colour = "forestgreen", linewidth = 1.2, size = 1.2
+    ) +
+    labs(x = x_label, y = paste0("RA of ", genus_name, " (log10)")) +
+    theme_classic() +
+    theme(
+      axis.title = element_text(size = 14, face = "bold"),
+      axis.text = element_text(size = 12),
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      plot.margin = margin(4, 8, 4, 4)
+    )
+}
+
+run_genera_analysis <- function(target_genera_hunter, target_genera_snowy,
+                                guild_prefix, guild_label,
+                                hunter_data, snowy_data,
+                                site_vars_list_hunter, site_vars_list_snowy,
+                                colour = "grey40") {
+  all_genera <- unique(c(target_genera_hunter, target_genera_snowy))
+  all_plots <- list()
+  stats_results <- data.frame()
+
+  for (genus in all_genera) {
+    genus_col <- paste0(guild_prefix, "__", genus)
+    has_hunter <- genus_col %in% names(hunter_data)
+    has_snowy <- genus_col %in% names(snowy_data)
+    if (!has_hunter && !has_snowy) next
+
+    genus_plots_hunter <- list()
+    genus_plots_snowy <- list()
+
+    make_site_plots <- function(data, site_vars, dataset_label) {
+      plots <- list()
+      new_stats <- data.frame()
+      for (var_name in names(site_vars)) {
+        var_info <- site_vars[[var_name]]
+        if (!var_info$col %in% names(data)) next
+        p <- make_crosshair_plot(
+          data, genus, genus_col, var_info$col, var_info$label,
+          guild_prefix, colour
+        )
+        if (!is.null(p)) {
+          y_tmp <- paste0(".y_relabund_", genus)
+          d_tmp <- data %>% mutate(!!y_tmp := log10((!!sym(genus_col) + 0.5) / reads.fungi))
+          stats <- get_lm_stats(d_tmp, y_tmp, var_info$col)
+          new_stats <- rbind(new_stats, data.frame(
+            Genus = genus, Guild = guild_label, Site_Variable = var_info$label,
+            Dataset = dataset_label, n = stats$n, R_squared = stats$r2,
+            F_statistic = stats$f, df1 = stats$df1, df2 = stats$df2,
+            p_value = stats$p, Significance = get_stars(stats$p),
+            stringsAsFactors = FALSE
+          ))
+          p <- p + annotate("text",
+            x = -Inf, y = Inf, label = stats$sig_str,
+            hjust = -0.05, vjust = 1.3, size = 4, colour = "grey30"
+          )
+          plots[[var_name]] <- p
+        }
+      }
+      list(plots = plots, stats = new_stats)
+    }
+
+    res_hunter <- if (has_hunter) make_site_plots(hunter_data, site_vars_list_hunter, "Hunter") else list(plots = list(), stats = data.frame())
+    res_snowy <- if (has_snowy) make_site_plots(snowy_data, site_vars_list_snowy, "Snowy") else list(plots = list(), stats = data.frame())
+
+    stats_results <- rbind(stats_results, res_hunter$stats, res_snowy$stats)
+    genus_plots_hunter <- res_hunter$plots
+    genus_plots_snowy <- res_snowy$plots
+
+    all_plots[[genus]] <- list(hunter = genus_plots_hunter, snowy = genus_plots_snowy)
+  }
+  list(plots = all_plots, stats = stats_results)
+}
+
+# ── Run analyses ───────────────────────────────────────────────────────────────
+ecm_results <- run_genera_analysis(
+  target_genera_hunter = hunter_ecm_targets, target_genera_snowy = snowy_ecm_targets,
+  guild_prefix = "ECM", guild_label = "EcM",
+  hunter_data = hunter_dat, snowy_data = snowies_dat,
+  site_vars_list_hunter = site_vars_common, site_vars_list_snowy = site_vars_common,
+  colour = "grey40"
+)
+
+# p value threshold
+threshold <- 0.1
+
+create_genus_figure <- function(genus_name, genus_plots, guild_label, colour,
+                                stats_df = NULL, sig_threshold = 1,
+                                site_vars_lookup = site_vars_common) {
+  hunter_plots <- genus_plots$hunter
+  snowy_plots <- genus_plots$snowy
+  if (!is.null(stats_df) && nrow(stats_df) > 0) {
+    key_to_label <- sapply(site_vars_lookup, function(x) x$label)
+    all_var_keys <- unique(c(names(hunter_plots), names(snowy_plots)))
+    keep_vars <- c()
+    for (var_key in all_var_keys) {
+      var_label <- key_to_label[[var_key]]
+      sig_h <- stats_df %>% filter(Genus == genus_name, Dataset == "Hunter", Site_Variable == var_label)
+      sig_s <- stats_df %>% filter(Genus == genus_name, Dataset == "Snowy", Site_Variable == var_label)
+      hunter_sig <- nrow(sig_h) > 0 && !is.na(sig_h$p_value[1]) && sig_h$p_value[1] < sig_threshold
+      snowy_sig <- nrow(sig_s) > 0 && !is.na(sig_s$p_value[1]) && sig_s$p_value[1] < sig_threshold
+      if (hunter_sig || snowy_sig) keep_vars <- c(keep_vars, var_key)
+    }
+    hunter_plots <- hunter_plots[intersect(names(hunter_plots), keep_vars)]
+    snowy_plots <- snowy_plots[intersect(names(snowy_plots), keep_vars)]
+  }
+  if (length(hunter_plots) == 0 && length(snowy_plots) == 0) {
+    return(NULL)
+  }
+  all_var_names <- unique(c(names(hunter_plots), names(snowy_plots)))
+  n_rows <- length(all_var_names)
+  title_hunter <- ggplot() +
+    annotate("text", x = 0.5, y = 0.5, label = "Hunter Mining", size = 5, fontface = "bold") +
+    theme_void()
+  title_snowy <- ggplot() +
+    annotate("text", x = 0.5, y = 0.5, label = "Snowy Hydro", size = 5, fontface = "bold") +
+    theme_void()
+  plot_list <- list(title_hunter, title_snowy)
+  for (var in all_var_names) {
+    p_h <- if (var %in% names(hunter_plots)) {
+      hunter_plots[[var]]
+    } else {
+      ggplot() +
+        theme_void() +
+        annotate("text", x = 0.5, y = 0.5, label = "(ns)", size = 4, colour = "grey50")
+    }
+    p_s <- if (var %in% names(snowy_plots)) {
+      snowy_plots[[var]]
+    } else {
+      ggplot() +
+        theme_void() +
+        annotate("text", x = 0.5, y = 0.5, label = "(ns)", size = 4, colour = "grey50")
+    }
+    plot_list <- c(plot_list, list(p_h, p_s))
+  }
+  wrap_plots(plot_list, ncol = 2, nrow = n_rows + 1, heights = c(0.15, rep(1, n_rows))) +
+    plot_annotation(theme = theme(plot.title = element_text(size = 14, face = "bold", hjust = 0.5)))
+}
+
+output_dir <- file.path(proj_root, "output/plots")
+
+ecm_genus_figures <- list()
+for (genus in names(ecm_results$plots)) {
+  fig <- create_genus_figure(genus, ecm_results$plots[[genus]], "EcM", "grey40",
+    stats_df = ecm_results$stats, sig_threshold = threshold,
+    site_vars_lookup = site_vars_common
+  )
+  if (!is.null(fig)) {
+    ecm_genus_figures[[genus]] <- fig
+  }
+}
+
+# ── EcM master figure (all significant panels, p < 0.1) ──────────────────────
+build_study_column <- function(all_results_list, study_name, stats_df, site_vars_list) {
+  study_key <- ifelse(study_name == "Hunter", "hunter", "snowy")
+  plots <- list()
+  for (genus in names(all_results_list)) {
+    genus_study_plots <- all_results_list[[genus]][[study_key]]
+    if (is.null(genus_study_plots) || length(genus_study_plots) == 0) next
+    for (var_name in names(genus_study_plots)) {
+      var_label <- site_vars_list[[var_name]]$label
+      sig_row <- stats_df %>% filter(Genus == genus, Dataset == study_name, Site_Variable == var_label)
+      if (nrow(sig_row) > 0 && !is.na(sig_row$p_value) && sig_row$p_value < threshold) {
+        plots <- c(plots, list(genus_study_plots[[var_name]]))
+      }
+    }
+  }
+  plots
+}
+
+ecm_hunter_col <- build_study_column(ecm_results$plots, "Hunter", ecm_results$stats, site_vars_common)
+ecm_snowy_col <- build_study_column(ecm_results$plots, "Snowy", ecm_results$stats, site_vars_common)
+max_plots <- max(length(ecm_hunter_col), length(ecm_snowy_col))
+
+title_hunter <- ggplot() +
+  annotate("text", x = 0.5, y = 0.5, label = "Hunter Mining", size = 5, fontface = "bold") +
+  theme_void()
+title_snowy <- ggplot() +
+  annotate("text", x = 0.5, y = 0.5, label = "Snowy Hydro", size = 5, fontface = "bold") +
+  theme_void()
+
+ecm_master_list <- list(title_hunter, title_snowy)
+for (i in seq_len(max_plots)) {
+  p_h <- if (i <= length(ecm_hunter_col)) {
+    ecm_hunter_col[[i]]
+  } else {
+    ggplot() +
+      theme_void()
+  }
+  p_s <- if (i <= length(ecm_snowy_col)) {
+    ecm_snowy_col[[i]]
+  } else {
+    ggplot() +
+      theme_void()
+  }
+  ecm_master_list <- c(ecm_master_list, list(p_h, p_s))
+}
+
+if (length(ecm_master_list) > 2) {
+  tags <- c(paste0(letters, ")"), paste0("a", letters, ")"))
+  plot_idx <- 1
+  for (i in 3:length(ecm_master_list)) {
+    row_i <- floor((i - 3) / 2) + 1
+    col_i <- ((i - 3) %% 2) + 1
+    is_real_hunter <- col_i == 1 && row_i <= length(ecm_hunter_col)
+    is_real_snowy <- col_i == 2 && row_i <= length(ecm_snowy_col)
+    if (is_real_hunter || is_real_snowy) {
+      ecm_master_list[[i]] <- ecm_master_list[[i]] + labs(tag = tags[plot_idx])
+      plot_idx <- plot_idx + 1
+    }
+  }
+  ecm_master <- wrap_plots(ecm_master_list,
+    ncol = 2,
+    heights = c(0.12, rep(1, max_plots))
+  ) &
+    theme(plot.tag = element_text(face = "bold"), plot.tag.margin = margin(0, 8, 0, 0))
+  ggsave(file.path(output_dir, "Figure_EcM_Master_SiteRecovery.png"),
+    plot = ecm_master, width = 14, height = min(4 * max_plots + 2, 300),
+    dpi = 300, bg = "white", limitsize = FALSE
+  )
+}
+
+# ── Statistics table ───────────────────────────────────────────────────────────
+all_stats <- rbind(ecm_results$stats) %>% #
+  arrange(Guild, Dataset, Genus, Site_Variable)
+
+if (nrow(all_stats) > 0) {
+  all_stats$p_formatted <- format_p_val(all_stats$p_value)
+  all_stats$df <- ifelse(is.na(all_stats$df1) | is.na(all_stats$df2), NA,
+    paste0(all_stats$df1, ", ", all_stats$df2)
+  )
+  display_cols <- c(
+    "Genus", "Guild", "Site_Variable", "Dataset", "n",
+    "R_squared", "F_statistic", "df", "p_formatted"
+  )
+  ft <- flextable(all_stats %>% select(-p_value, -df1, -df2), col_keys = display_cols) %>%
+    set_header_labels(
+      Genus = "Genus", Guild = "Guild", Site_Variable = "Site Variable",
+      Dataset = "Dataset", n = "n (Rehab)", R_squared = "R\u00B2",
+      F_statistic = "F", df = "df", p_formatted = "p-value"
+    ) %>%
+    align(align = "center", part = "all") %>%
+    align(j = c(1, 2, 3, 4), align = "left", part = "body") %>%
+    bold(part = "header") %>%
+    italic(j = "Genus", part = "body") %>%
+    autofit() %>%
+    bold(i = ~ Significance %in% c("+", "*", "**", "***"), j = "p_formatted")
+  tables_dir <- file.path(proj_root, "output/tables")
+  dir.create(tables_dir, showWarnings = FALSE, recursive = TRUE)
+  save_as_docx(ft, path = file.path(tables_dir, "Table_Genera_SiteRecovery_Statistics.docx"))
+  sig_results <- all_stats %>% filter(Significance %in% c("*", "**", "***"))
+}
+
+# ── Display figures ────────────────────────────────────────────────────────────
+ecm_master
+# Display stats
+ft
+```
+
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,88 @@
+Column_Title,Description 1,Description 2
+Plot_ID,,
+Site_ID,"Rehab site / location ID, text",
+Treat,"Rehab or Reference, text",
+Bioregion,,
+Easting,,
+Northing,,
+Plot bearing,,
+Aspect_deg,,
+Slope,,
+Aspect,"classes, text",
+Exposure_NW,"see Ashcroft and Gollan, 2011",
+Fire_Severity_2003,"see Barret, 2006",
+Elevation,m asl,
+Climate,three zones based on MAT and MAP,
+Rehab_Yr,"year of completion, for rehab sites only",
+Temp_C,Mean annual Temp.  ANUCLIM,
+Prec_mm,Mean annual precip.  ANUCLIM,
+ANPP,estimated from model of of MAT and MAP for forest and woodland ecosystems,
+ SLA,wieghted specific leaf area m2_per_kg,
+LDMC,"leaf dry matter content, community wieghted , mg_per_gram",
+Leaf_N,weighted leaf N,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of C,N and P use mean E.dal values from all samples.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of P use mean concentrations from all E vim observations. "
+Leaf_C,weighted leaf C,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of C,N and P use mean E.dal values from all samples.  "
+Leaf_C_N,weighted leaf C:N,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of C,N and P use mean E.dal values from all samples.  "
+Leaf_N_P,wighted leaf N:P,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of C,N and P use mean E.dal values from all samples.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of P use mean concentrations from all E vim observations. "
+Leaf_C_P,weighted leaf C:P,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of C,N and P use mean E.dal values from all samples.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of P use mean concentrations from all E vim observations. "
+Leaf_B,weighted leaf Boron,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Na,weighted leaf sodium,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Mg,weighted leaf magnesium,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_P,weighted leaf P,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of C,N and P use mean E.dal values from all samples.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of P use mean concentrations from all E vim observations. "
+Leaf_Ca43,weighted leaf Calcium 43,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Ca44,weighted leaf calcium 44,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Mn,weighted leaf manganese,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_K,weighted leaf potassium,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Fe,weighted leaf iron,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Cu,weighted leaf copper,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Zn66,weighted leaf zinc 66,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Zn67,weighted leaf zinc 67,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Mo,weighted leaf moly,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Pb,weighted leaf lead,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Leaf_Sr,weighted leaf strontium,"NOTE: E.dal (site 575) is missing leaf nutrient data, so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover.  E.vim (site 551) is missing most nutrient data (has N and C), so estimates of the weighted leaf traits place greater weight on sub-dominant species in these instances and reflect a smaller proportion of the total veg cover. "
+Exotic_Cover,summed cover exotics ,
+Fern_Cov,summed cover ferns,Native species only
+Forb_Cov,summed cover forbs,Native species only
+GG_cov,summed cover grasses and grass-like,Native species only
+Other_cover,summed cover other growth forms,Native species only
+Shrub_cov,sum cover shrubs,Native species only
+Tree_cov,sum cover trees,Native species only
+Exotic_R,richness exotics,
+Fern_R,richness ferns,Native species only
+Forb_R,richness forbs,Native species only
+GG_R,richness grass and grass-like,Native species only
+Other_R,richness other growth forms,Native species only
+Shrub_R,richness shrubs,Native species only
+Tree_R,richness trees,Native species only
+Native_R,total native richness,
+Native_cov,summed native cover,
+Total_R,total richness,
+Logs,length (m) fallen debris >10cm diameter,
+<5_adj,stems <5cm dbh in 50 x 20,
+5_9_adj,stems 5-9cm dbh in 50 x 20,
+10_19_adj,stems 10-19cm dbh in 50 x 20,
+20_29_adj,stems 20-29cm dbh in 50 x 20,
+30_49_adj,stems 30-49cm dbh in 50 x 20,
+50_79_adj,stems 50-79cm dbh in 50 x 20,
+80+_adj,stems >80cm dbh in 50 x 20,
+HTW_cov,cover High threat exotics,
+PA_recruit,"PA tree recruitment, not likely useful",
+Recruit_TG_SG,richness of native tree and shrub species with evidence of recruits,
+Nat_Spp_fruiting,richness of native species with fruit (based on visual assessment at plot scale),
+%_spp_fruit,% of native species fruiting,
+%_TG_SG_recruit,% of native trees and shrubs with recruitment,
+Euc_live_ha,Number live eucalypt individuals per ha,
+Euc_dead_ha,Number dead eucalypts per ha,
+Acac_ha,Acacia dealbata and melanoxylon per hectare,
+Tree_live_ha,Eucs + acacia per hectare,
+mean_live_DBH,cm.  Eucs only,
+StdDev_live_DBH,cm.  Eucs only,
+CV_DBH,coefficient variation in euc DBH,
+Pr_Epicormic,proportion of live eucs with evidence of epicormic shoots,
+Av_Dist_Tree_m,mean distance from open quadrats to nearest tree (m).  Alternative measure of stem density,
+SumCoverDom,Summed % cover of 5 most abundant species for which leaf traits we taken,
+Dominant_Euc,Dominant euc species based on visual foliage cover,
+Frt_shan,"Shannon diversity of fruits from litter sort, abundance is count of fruits for each species, summed across all quadrats",
+shannon_div,"Shannon diversity of vegetation, abundance is foliage cover",
+resprout_w,"An estimate of the community weighted resprouting capcity of the five dominant tree and shrub species at each site (each spp scored 0 - 1, based on fire response, 0=killed, 0.25=killed occassional suckering, 0.5=suckering, basal sprouting, 0.75=basal and epicormic, 1 = predominantly epicormic)",
+wooddens_w,An estimate of the weighted wood density for dominant trees and shrubs - wood density data not available for all species at all sites so may be biased estimate,
+basal_area,eucalypt total basal area (m2/ha),
