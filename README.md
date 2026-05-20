@@ -8,55 +8,82 @@ recovery at two Australian mine rehabilitation case studies: **Hunter Mining**
 
 ```
 Myco_comp_barrier_to_restoration/
-├── analysis.Rmd              # Master RMarkdown — knit to reproduce all outputs
-├── R_scripts/                
-│   ├── Site_maps.R           # Site map figures
-│   └── hmsc/                 # HMSC model preparation & post-processing
+├── Myco_Comp_Restoration_Barrier.Rmd   # Master RMarkdown — knit to reproduce all outputs
+├── Myco_comp_barrier_to_restoration.Rproj
+├── R_scripts/
+│   ├── Site_maps.R                     # Site map figures
+│   └── hmsc/                           # HMSC model preparation & post-processing
 │       ├── dataPrep_hmsc_hunter_reference.R
 │       ├── dataPrep_hmsc_hunter_rehab.R
 │       ├── dataPrep_hmsc_snowies_reference.R
 │       ├── dataPrep_hmsc_snowies_rehab.R
 │       └── functions_hmsc.R
 ├── rawdata/
-│   ├── ITS/                  # ITS amplicon sequencing data — NOT tracked by git (~40–50 MB each)
-│   ├── metadata/
-│   │   ├── hunter/           # Hunter Mining site metadata
-│   │   └── snowies/          # Snowy Hydro site metadata
-├── models/                   # Pre-fitted HMSC & CCA model objects (.RData) — NOT tracked by git
+│   ├── ITS/                            # ITS amplicon sequencing data (~40–50 MB each)
+│   │   ├── hunter_ITS_long_20210604.txt
+│   │   └── snowies_ITS_long_20210604.txt
+│   └── metadata/
+│       ├── hunter/                     # Hunter Mining site metadata (CSVs + XLSX)
+│       └── snowies/                    # Snowy Hydro site metadata (CSVs)
+├── models/                             # Pre-fitted HMSC & CCA model objects (.RData)
 │   ├── hunter/
-│   │   ├── cca/              # ordistep_reference.RData, ordistep_rehab.RData
-│   │   ├── hmsc_reference/   # mcmc_input/output/convergence.RData
+│   │   ├── cca/                        # ordistep_reference.RData, ordistep_rehab.RData
+│   │   ├── hmsc_reference/             # mcmc_output.RData, mcmc_convergence.RData
 │   │   └── hmsc_rehab/
 │   └── snowies/
 │       ├── cca/
 │       ├── hmsc_reference/
 │       └── hmsc_rehab/
-├── deriveddata/              # Cached processed data (.rds) — auto-generated, not tracked
+├── deriveddata/                        # Cached processed data (.rds)
+├── submission_files/                   # Bundled data archive for reproducibility
+│   ├── rawdata/                        #   (mirrors rawdata/, deriveddata/, models/)
+│   ├── deriveddata/
+│   └── models/
 └── output/
-    ├── plots/                # All publication figures (auto-generated, not tracked)
-    └── tables/               # All statistics tables (auto-generated, not tracked)
+    ├── plots/                          # All publication figures (auto-generated)
+    └── tables/                         # All statistics tables (auto-generated)
 ```
 
-## Quick Start
+## Reproducing from `submission_files`
 
-1. **Open** the R project: `Myco_comp_barrier_to_restoration.Rproj`
-2. **Install dependencies** (see below)
-3. **Obtain model files**: Place pre-fitted HMSC and CCA model `.RData`
-   files in the `models/` directory (see structure above). These are not
-   tracked by git due to size. Alternatively, uncomment the relevant
-   `source()` calls in the `hmsc-run-models` chunk to refit from scratch
-   (takes several hours per model).
-4. **Knit** `analysis.Rmd` — this generates all figures and tables in `output/`
+The `submission_files/` folder (or its zipped archive) contains **all data
+required to knit the RMarkdown**, bundled into three subfolders:
 
-### First Run
+| Folder | Contents | Size |
+|--------|----------|------|
+| `rawdata/` | ITS amplicon tables and site metadata CSVs | ~85 MB |
+| `deriveddata/` | Pre-processed RDS caches (genus-level OTU tables, predictors, etc.) | ~4 MB |
+| `models/` | Pre-fitted HMSC MCMC outputs and CCA ordistep `.RData` files | ~1.5 GB |
 
-On first run, set these flags at the top of `analysis.Rmd`:
+ **Unzip** the `submission_files` archive (or locate the `submission_files/`
+   folder) so you have the three subfolders: `rawdata/`, `deriveddata/`, and
+   `models/`.
 
-```r
-RELOAD_FROM_RAW  <- TRUE   # Process raw data (slow, ~2 min)
-RERUN_INDICATORS <- FALSE  # Use pre-generated indicator taxa table
-RECOMPUTE_HMSC   <- TRUE   # Compute HMSC associations from model objects
-```
+ **Copy the three folders into the project root** — so your directory looks like:
+   ```
+   Myco_comp_barrier_to_restoration/
+   ├── Myco_Comp_Restoration_Barrier.Rmd
+   ├── Myco_comp_barrier_to_restoration.Rproj
+   ├── R_scripts/
+   ├── rawdata/          ← from submission_files
+   ├── deriveddata/      ← from submission_files
+   └── models/           ← from submission_files
+   ```
+
+**Install R package dependencies** 
+
+**Set the reproducibility flags** at the top of
+   `Myco_Comp_Restoration_Barrier.Rmd`:
+   ```r
+   RELOAD_FROM_RAW  <- TRUE   # Process raw data from rawdata/ (~2 min)
+   RERUN_INDICATORS <- TRUE   # Re-run indicator taxa analysis
+   RECOMPUTE_HMSC   <- TRUE   # Compute HMSC associations from model objects
+   RERUN_CCA        <- FALSE  # Load pre-fitted CCA models (set TRUE to refit)
+   ```
+
+**Knit** `Myco_Comp_Restoration_Barrier.Rmd` — all figures and tables are generated
+ in `output/plots/` and `output/tables/`.
+
 
 After the first run, processed data is cached in `deriveddata/`. Switch
 `RELOAD_FROM_RAW <- FALSE` for fast subsequent knits.
@@ -110,11 +137,11 @@ install.packages(c(
 
 ## Notes
 
-- `analysis.Rmd` is the primary reproducible entry point. Most analyses
-  are coded inline. One folder is sourced externally:
+- `Myco_Comp_Restoration_Barrier.Rmd` is the primary reproducible entry point.
+  Most analyses are coded inline. One folder is sourced externally:
   - `R_scripts/hmsc/dataPrep_hmsc_*.R` — HMSC data prep & model fitting
     (sourced only if the `hmsc-run-models` chunk is uncommented)
-- `R_scripts/Site_maps.R` standalone script retained for to generate manuscript plots
+- `R_scripts/Site_maps.R` standalone script retained to generate manuscript plots
 - All paths in the `R_scripts/hmsc/` scripts resolve relative to `proj_root`
   (set automatically via `here::here()` when sourced from the Rmd).
 - HMSC models are **never re-fit** during a normal knit — only pre-saved

@@ -4,6 +4,9 @@
 .RData
 .Ruserdata
 
+#Rmd output
+*.html
+
 # ── Pre-fitted models (too large for GitHub) ─────────────────────────────────
 models/**/*.RData
 
@@ -38,3 +41,6 @@ analysis.html
 # ── AI agent files (not part of the research project) ────────────────────────
 AGENTS.md
 .gemini/
+
+# Submission file with all large files
+submission_files/
